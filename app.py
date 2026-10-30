@@ -1,12 +1,17 @@
-"""Warehouse document tracking & bottleneck analytics.
+"""Warehouse Document Tracking & Bottleneck Analytics
 Run: streamlit run warehouse_document_tracking.py
+
+Install dependencies:
+    pip install streamlit pandas plotly openpyxl
 """
+
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 import os
 import sqlite3
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 
@@ -16,109 +21,36 @@ DB_PATH = Path(
         str(Path(__file__).resolve().with_name("warehouse_tracking.db")),
     )
 )
-DEFAULT_CUTOFF = time(16, 30)
+CUTOFF_DEFAULT = time(16, 30)
 
-STATUSES = {
+STATUS_LABELS = {
     "received": "📥 รับเอกสาร",
-    "in_progress": "📦 กำลังจัด",
-    "completed": "✅ จัดเสร็จแล้ว",
-    "returned": "🔄 รับคืนเอกสาร",
-    "cancelled": "❌ เอกสารถูกยกเลิก",
+    "in_progress": "🟡 กำลังจัด",
+    "completed": "🔵 จัดเสร็จ / รอ PD รับ",
+    "handed_over": "🟢 PD มารับแล้ว",
+    "cancelled": "🔴 ยกเลิก",
+}
+
+STATUS_COLORS = {
+    "received": "#64748b",
+    "in_progress": "#e9a21b",
+    "completed": "#3686d6",
+    "handed_over": "#21966b",
+    "cancelled": "#d94b55",
 }
 
 
+# ---------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------
+
 def get_connection():
-    """เปิดการเชื่อมต่อ SQLite"""
     connection = sqlite3.connect(DB_PATH, timeout=10)
     connection.row_factory = sqlite3.Row
     return connection
 
 
-def seed_mock_data(connection):
-    """เพิ่มข้อมูลจำลองตัวอย่างสำหรับแสดงผลครั้งแรก"""
-    samples = [
-        ("WR-26001", "ผลิต", "สมชาย", "น็อต M8, แหวนรอง", 8, 12, "completed", 9, 5, "ส่งตามรอบเช้า"),
-        ("WR-26002", "ซ่อมบำรุง", "วิภา", "น้ำมันหล่อลื่น", 9, 35, "completed", 10, 42, ""),
-        ("WR-26003", "ผลิต", "อนันต์", "กล่องบรรจุภัณฑ์", 10, 48, "completed", 12, 20, ""),
-        ("WR-26004", "คุณภาพ", "มาลี", "ถุงมือไนไตร", 13, 10, "completed", 14, 2, ""),
-        ("WR-26005", "ผลิต", "สมชาย", "อะไหล่สายพาน", 15, 55, "in_progress", None, None, "เร่งด่วน ต้องใช้พรุ่งนี้เช้า"),
-        ("WR-26006", "ซ่อมบำรุง", "ปรีชา", "ลูกปืน 6204", 16, 42, "received", None, None, "รับหลัง cut-off"),
-        ("WR-26007", "ผลิต", "วิภา", "เทปกาว, ฟิล์มยืด", 17, 18, "completed", 18, 16, "รับหลัง cut-off"),
-        ("WR-26008", "คลังสินค้า", "กิตติ", "ป้ายฉลาก", 14, 25, "returned", None, None, "คืนเอกสารเพื่อแก้ไข"),
-        ("WR-26009", "ผลิต", "มาลี", "ถังพลาสติก", 11, 20, "cancelled", None, None, "ยกเลิกรายการ"),
-        ("WR-26010", "คุณภาพ", "อนันต์", "อุปกรณ์ตรวจวัด", 16, 55, "completed", 18, 5, "รับหลัง cut-off"),
-        ("WR-26011", "ผลิต", "ปรีชา", "วัตถุดิบ A-12", 8, 50, "completed", 10, 10, ""),
-        ("WR-26012", "ซ่อมบำรุง", "กิตติ", "ซีลยาง", 15, 5, "completed", 16, 25, ""),
-    ]
-
-    now = datetime.now().isoformat(timespec="seconds")
-    today = date.today()
-
-    for index, sample in enumerate(samples):
-        (
-            number,
-            department,
-            requester,
-            items,
-            hour,
-            minute,
-            status,
-            completed_hour,
-            completed_minute,
-            note,
-        ) = sample
-
-        sample_date = today - timedelta(days=index % 6)
-        received_at = datetime.combine(sample_date, time(hour, minute))
-
-        started_at = None
-        if status in ("in_progress", "completed"):
-            started_at = received_at + timedelta(minutes=20 + index * 5)
-
-        completed_at = None
-        if completed_hour is not None:
-            completed_at = datetime.combine(
-                sample_date,
-                time(completed_hour, completed_minute),
-            )
-
-        returned_at = None
-        if status == "returned":
-            returned_at = received_at + timedelta(minutes=75)
-
-        cancelled_at = None
-        if status == "cancelled":
-            cancelled_at = received_at + timedelta(minutes=22)
-
-        connection.execute(
-            """
-            INSERT INTO requisitions (
-                requisition_no, department, requester, item_summary,
-                received_at, in_progress_at, completed_at, returned_at,
-                cancelled_at, status, note, created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                number,
-                department,
-                requester,
-                items,
-                received_at.isoformat(timespec="minutes"),
-                started_at.isoformat(timespec="minutes") if started_at else None,
-                completed_at.isoformat(timespec="minutes") if completed_at else None,
-                returned_at.isoformat(timespec="minutes") if returned_at else None,
-                cancelled_at.isoformat(timespec="minutes") if cancelled_at else None,
-                status,
-                note,
-                now,
-                now,
-            ),
-        )
-
-
 def initialize_database():
-    """สร้างตารางและ mock data เมื่อฐานข้อมูลยังว่าง"""
     with get_connection() as connection:
         connection.execute(
             """
@@ -131,8 +63,11 @@ def initialize_database():
                 received_at TEXT NOT NULL,
                 in_progress_at TEXT,
                 completed_at TEXT,
-                returned_at TEXT,
+                handed_over_at TEXT,
                 cancelled_at TEXT,
+                cancellation_by TEXT,
+                cancellation_reason TEXT,
+                cancelled_labor_minutes REAL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'received',
                 note TEXT DEFAULT '',
                 created_at TEXT NOT NULL,
@@ -140,6 +75,23 @@ def initialize_database():
             )
             """
         )
+
+        # Add columns when opening a database created by an earlier version.
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(requisitions)")
+        }
+        migrations = {
+            "handed_over_at": "TEXT",
+            "cancellation_by": "TEXT",
+            "cancellation_reason": "TEXT",
+            "cancelled_labor_minutes": "REAL DEFAULT 0",
+        }
+        for column, definition in migrations.items():
+            if column not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE requisitions ADD COLUMN {column} {definition}"
+                )
 
         count = connection.execute(
             "SELECT COUNT(*) FROM requisitions"
@@ -149,48 +101,127 @@ def initialize_database():
             seed_mock_data(connection)
 
 
+def seed_mock_data(connection):
+    """Insert sample records so charts and tables are populated on first run."""
+    today = date.today()
+    now = datetime.now().isoformat(timespec="seconds")
+
+    samples = [
+        ("WR-26001", "PN-ผลิต-1", "สมชาย", "น็อต M8, แหวนรอง", 8, 12, "handed_over", 9, 5, 9, 45, None, None, 0, ""),
+        ("WR-26002", "PD-ซ่อมบำรุง", "วิภา", "น้ำมันหล่อลื่น", 9, 35, "handed_over", 10, 42, 11, 20, None, None, 0, ""),
+        ("WR-26003", "PN-ผลิต-2", "อนันต์", "กล่องบรรจุภัณฑ์", 10, 48, "completed", 12, 20, None, None, None, None, 0, "จัดเสร็จ รอ PD"),
+        ("WR-26004", "PD-คุณภาพ", "มาลี", "ถุงมือไนไตร", 13, 10, "handed_over", 14, 2, 15, 10, None, None, 0, ""),
+        ("WR-26005", "PN-ผลิต-1", "สมชาย", "อะไหล่สายพาน", 15, 55, "in_progress", None, None, None, None, None, None, 0, "ต้องใช้พรุ่งนี้เช้า"),
+        ("WR-26006", "PD-ซ่อมบำรุง", "ปรีชา", "ลูกปืน 6204", 16, 42, "received", None, None, None, None, None, None, 0, "รับหลัง cut-off"),
+        ("WR-26007", "PN-ผลิต-2", "วิภา", "เทปกาว, ฟิล์มยืด", 17, 18, "handed_over", 18, 16, 18, 48, None, None, 0, "รับหลัง cut-off"),
+        ("WR-26008", "PD-คลังสินค้า", "กิตติ", "ป้ายฉลาก", 14, 25, "cancelled", None, None, None, None, "PN-ผลิต-1", "เปลี่ยนแผนการผลิต", 35, ""),
+        ("WR-26009", "PN-ผลิต-1", "มาลี", "ถังพลาสติก", 11, 20, "cancelled", None, None, None, None, "PD-ผลิต-1", "เบิกซ้ำกับใบเดิม", 20, ""),
+        ("WR-26010", "PD-คุณภาพ", "อนันต์", "อุปกรณ์ตรวจวัด", 16, 55, "handed_over", 17, 10, 18, 5, None, None, 0, "รับหลัง cut-off"),
+        ("WR-26011", "PN-ผลิต-2", "ปรีชา", "วัตถุดิบ A-12", 8, 50, "handed_over", 9, 15, 10, 10, None, None, 0, ""),
+        ("WR-26012", "PD-ซ่อมบำรุง", "กิตติ", "ซีลยาง", 15, 5, "completed", 15, 25, None, None, None, None, 0, "จัดเสร็จ รอ PD"),
+        ("WR-26013", "PN-ผลิต-1", "สมชาย", "โฟมกันกระแทก", 16, 35, "cancelled", None, None, None, None, "PN-ผลิต-1", "ยกเลิกกะทันหัน", 42, "ใบเบิกเย็นและยกเลิก"),
+    ]
+
+    for index, sample in enumerate(samples):
+        (
+            number, department, requester, items, hour, minute, status,
+            completed_hour, completed_minute, handover_hour, handover_minute,
+            cancelled_by, cancel_reason, wasted_minutes, note,
+        ) = sample
+
+        record_date = today - timedelta(days=index % 7)
+        received_at = datetime.combine(record_date, time(hour, minute))
+
+        in_progress_at = None
+        if status in ("in_progress", "completed", "handed_over"):
+            in_progress_at = received_at + timedelta(minutes=15 + (index * 9) % 40)
+
+        completed_at = None
+        if completed_hour is not None:
+            completed_at = datetime.combine(
+                record_date, time(completed_hour, completed_minute)
+            )
+
+        handed_over_at = None
+        if handover_hour is not None:
+            handed_over_at = datetime.combine(
+                record_date, time(handover_hour, handover_minute)
+            )
+
+        cancelled_at = None
+        if status == "cancelled":
+            cancelled_at = received_at + timedelta(minutes=int(wasted_minutes))
+
+        connection.execute(
+            """
+            INSERT INTO requisitions (
+                requisition_no, department, requester, item_summary,
+                received_at, in_progress_at, completed_at, handed_over_at,
+                cancelled_at, cancellation_by, cancellation_reason,
+                cancelled_labor_minutes, status, note, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                number,
+                department,
+                requester,
+                items,
+                received_at.isoformat(timespec="minutes"),
+                in_progress_at.isoformat(timespec="minutes") if in_progress_at else None,
+                completed_at.isoformat(timespec="minutes") if completed_at else None,
+                handed_over_at.isoformat(timespec="minutes") if handed_over_at else None,
+                cancelled_at.isoformat(timespec="minutes") if cancelled_at else None,
+                cancelled_by,
+                cancel_reason,
+                wasted_minutes,
+                status,
+                note,
+                now,
+                now,
+            ),
+        )
+
+
 def load_data():
-    """โหลดข้อมูลและคำนวณแท็กกับ Lead Time"""
     with get_connection() as connection:
         data = pd.read_sql_query(
             "SELECT * FROM requisitions ORDER BY received_at DESC, id DESC",
             connection,
         )
 
-    datetime_columns = [
+    timestamp_columns = [
         "received_at",
         "in_progress_at",
         "completed_at",
-        "returned_at",
+        "handed_over_at",
         "cancelled_at",
     ]
-
-    for column in datetime_columns:
+    for column in timestamp_columns:
         data[column] = pd.to_datetime(data[column], errors="coerce")
 
     cutoff = st.session_state.cutoff
-
     data["late"] = data["received_at"].apply(
         lambda value: value.time() > cutoff if pd.notna(value) else False
     )
-    data["lead_minutes"] = (
+    data["processing_minutes"] = (
         data["completed_at"] - data["received_at"]
     ).dt.total_seconds() / 60
-    data["status_label"] = data["status"].map(STATUSES)
+    data["waiting_minutes"] = (
+        data["handed_over_at"] - data["completed_at"]
+    ).dt.total_seconds() / 60
+    data["status_label"] = data["status"].map(STATUS_LABELS)
     data["tag"] = data["late"].map(
         {
             True: "🔴 ใบเบิกเย็น/ส่งช้า",
             False: "🟢 ในเวลาตัดรอบ",
         }
     )
-
     return data
 
 
 def add_requisition(number, department, requester, items, received_at, note):
-    """บันทึกใบเบิกใหม่"""
     now = datetime.now().isoformat(timespec="seconds")
-
     with get_connection() as connection:
         connection.execute(
             """
@@ -213,24 +244,24 @@ def add_requisition(number, department, requester, items, received_at, note):
         )
 
 
-def update_status(record_id, status, event_at, note):
-    """อัปเดตสถานะและเวลาในขั้นตอนที่เลือก"""
+def save_status(record_id, status, event_at, note, cancel_by="", cancel_reason="",
+                wasted_minutes=0):
     timestamp_columns = {
         "in_progress": "in_progress_at",
         "completed": "completed_at",
-        "returned": "returned_at",
+        "handed_over": "handed_over_at",
         "cancelled": "cancelled_at",
     }
-
     timestamp_column = timestamp_columns[status]
     now = datetime.now().isoformat(timespec="seconds")
 
-    # ชื่อ column มาจาก dictionary ที่กำหนดไว้ในโค้ดเท่านั้น
     with get_connection() as connection:
         connection.execute(
             f"""
             UPDATE requisitions
-            SET status = ?, {timestamp_column} = ?, note = ?, updated_at = ?
+            SET status = ?, {timestamp_column} = ?, note = ?, updated_at = ?,
+                cancellation_by = ?, cancellation_reason = ?,
+                cancelled_labor_minutes = ?
             WHERE id = ?
             """,
             (
@@ -238,50 +269,96 @@ def update_status(record_id, status, event_at, note):
                 event_at.isoformat(timespec="minutes"),
                 note.strip(),
                 now,
+                cancel_by.strip() or None,
+                cancel_reason.strip() or None,
+                float(wasted_minutes or 0),
                 record_id,
             ),
         )
 
 
 # ---------------------------------------------------------------------
-# Streamlit application
+# Streamlit UI
 # ---------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="Warehouse Document Tracking",
+    page_title="PK Warehouse | Document Flow",
     page_icon="📦",
     layout="wide",
 )
 
 if "cutoff" not in st.session_state:
-    st.session_state.cutoff = DEFAULT_CUTOFF
+    st.session_state.cutoff = CUTOFF_DEFAULT
 
 initialize_database()
 
 st.markdown(
     """
     <style>
-    .block-container {
-        padding-top: 1.3rem;
-        padding-bottom: 2.5rem;
-        max-width: 1500px;
+    @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
+
+    html, body, [class*="css"] {
+        font-family: 'Prompt', sans-serif;
     }
-    [data-testid="stMetric"] {
-        background: #f1f7fb;
-        border: 1px solid #dce8ef;
-        padding: 15px;
-        border-radius: 14px;
+    .stApp {
+        background:
+            radial-gradient(ellipse at 8% 0%, rgba(78, 153, 165, .13), transparent 32%),
+            radial-gradient(ellipse at 94% 7%, rgba(96, 122, 190, .12), transparent 30%),
+            #f3f6fa;
+    }
+    .block-container {
+        max-width: 1540px;
+        padding-top: 1.3rem;
+        padding-bottom: 2rem;
     }
     .hero {
-        padding: 20px 25px;
-        border-radius: 18px;
-        color: white;
-        background: linear-gradient(110deg, #12304a, #146c72);
-        margin-bottom: 18px;
+        padding: 25px 30px;
+        border: 1px solid rgba(255,255,255,.48);
+        border-radius: 22px;
+        color: #f9fbff;
+        background: linear-gradient(115deg, rgba(19,43,65,.97), rgba(27,102,112,.95));
+        box-shadow: 0 18px 45px rgba(29,58,81,.17);
+        margin-bottom: 20px;
     }
-    .hero p {
-        margin: 0;
-        opacity: .85;
+    .hero p { margin: 2px 0 0; color: #d6e6ef; }
+    [data-testid="stMetric"] {
+        background: rgba(255,255,255,.76);
+        border: 1px solid rgba(255,255,255,.95);
+        border-radius: 18px;
+        padding: 16px 18px;
+        box-shadow: 0 8px 24px rgba(26,48,71,.07);
+        backdrop-filter: blur(12px);
+    }
+    [data-testid="stMetricValue"] { color: #172f46; }
+    div.stButton > button, div.stFormSubmitButton > button,
+    div.stDownloadButton > button {
+        border-radius: 12px;
+        transition: transform .12s ease, box-shadow .15s ease, filter .15s ease;
+        box-shadow: 0 5px 14px rgba(28,73,103,.12);
+    }
+    div.stButton > button:hover, div.stFormSubmitButton > button:hover,
+    div.stDownloadButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 9px 20px rgba(28,73,103,.2);
+        filter: brightness(1.03);
+    }
+    div.stButton > button:active, div.stFormSubmitButton > button:active,
+    div.stDownloadButton > button:active {
+        transform: scale(.98);
+    }
+    div[data-testid="stForm"] {
+        background: rgba(255,255,255,.72);
+        border: 1px solid rgba(255,255,255,.95);
+        border-radius: 18px;
+        padding: 18px;
+        box-shadow: 0 8px 26px rgba(26,48,71,.06);
+        backdrop-filter: blur(10px);
+    }
+    div[data-testid="stDataFrame"] {
+        border: 1px solid #e5ebf1;
+        border-radius: 16px;
+        overflow: hidden;
+        box-shadow: 0 8px 22px rgba(26,48,71,.06);
     }
     </style>
     """,
@@ -291,8 +368,8 @@ st.markdown(
 st.markdown(
     """
     <div class="hero">
-        <h1>📦 Warehouse Document Tracking</h1>
-        <p>บันทึกเวลาทุกขั้นตอน • มองเห็นใบเบิกหลัง Cut-off • วิเคราะห์คอขวดคลังสินค้า</p>
+        <h1>📦 PK Warehouse · Document Flow</h1>
+        <p>ติดตามทุกช่วงเวลา • จัดการคิวหน้างาน • แสดงข้อมูลด้วยเวลาจริง</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -301,277 +378,412 @@ st.markdown(
 with st.sidebar:
     st.header("⚙️ ตั้งค่าระบบ")
     st.session_state.cutoff = st.time_input(
-        "เวลา Cut-off",
+        "Cut-off รับเอกสาร",
         value=st.session_state.cutoff,
         step=300,
-        help="ใบเบิกที่รับหลังเวลานี้จะติดแท็กใบเบิกเย็น",
+        help="ใบเบิกที่เข้าหลังเวลานี้จะถูกติดแท็กใบเบิกเย็น",
     )
-    st.caption(f"ตัดรอบเวลา {st.session_state.cutoff:%H:%M} น.")
+    st.caption(f"เวลาตัดรอบปัจจุบัน: **{st.session_state.cutoff:%H:%M} น.**")
     st.divider()
-    st.markdown("**5 สถานะเอกสาร**")
-
-    for status_label in STATUSES.values():
-        st.caption(status_label)
-
+    st.markdown("**สีสถานะ**")
+    st.markdown("🟡 กำลังจัด")
+    st.markdown("🔵 จัดเสร็จ รอ PD")
+    st.markdown("🟢 PD มารับแล้ว")
+    st.markdown("🔴 ยกเลิก / ใบเบิกเย็น")
     st.divider()
-    st.caption("บันทึกข้อมูลใน SQLite บนเครื่องที่รันแอป")
-
+    st.caption(f"ฐานข้อมูล SQLite: `{DB_PATH.name}`")
 
 data = load_data()
 completed_data = data[data["completed_at"].notna()]
+handed_over_data = data[data["waiting_minutes"].notna()]
+cancelled_data = data[data["status"] == "cancelled"]
 
-late_percentage = data["late"].mean() * 100 if len(data) else 0
-average_lead = (
-    completed_data["lead_minutes"].mean()
+late_pct = data["late"].mean() * 100 if len(data) else 0
+avg_processing = (
+    completed_data["processing_minutes"].mean()
     if not completed_data.empty
     else float("nan")
 )
-
-average_display = (
-    f"{average_lead / 60:.1f} ชม."
-    if pd.notna(average_lead)
-    else "—"
+avg_waiting = (
+    handed_over_data["waiting_minutes"].mean()
+    if not handed_over_data.empty
+    else float("nan")
 )
+wasted_labor = data["cancelled_labor_minutes"].fillna(0).sum()
 
-metric1, metric2, metric3 = st.columns(3)
-metric1.metric("📄 เอกสารทั้งหมด", f"{len(data):,}")
-metric2.metric("🔴 ใบเบิกเย็น", f"{late_percentage:.1f}%")
-metric3.metric(
+kpis = st.columns(5)
+kpis[0].metric("📄 ยอดรวมใบเบิก", f"{len(data):,}")
+kpis[1].metric("🔴 ใบเบิกเย็น", f"{late_pct:.1f}%")
+kpis[2].metric(
     "⏱️ เวลาจัดเฉลี่ย",
-    average_display,
-    help="เวลาตั้งแต่รับเอกสารจนจัดเสร็จ เฉพาะรายการที่เสร็จแล้ว",
+    f"{avg_processing / 60:.1f} ชม." if pd.notna(avg_processing) else "—",
+    help="เวลารับเอกสารถึงจัดเสร็จ",
+)
+kpis[3].metric(
+    "🕒 เวลารอรับเฉลี่ย",
+    f"{avg_waiting:.0f} นาที" if pd.notna(avg_waiting) else "—",
+    help="เวลาจัดเสร็จจนถึง PD มารับ",
+)
+kpis[4].metric(
+    "❌ ยกเลิก / แรงงานสูญเปล่า",
+    f"{len(cancelled_data)} / {wasted_labor:.0f} นาที",
+    help="จำนวนนับใบยกเลิก และเวลาทำงานที่สูญเปล่าตามค่าที่บันทึก",
 )
 
-st.subheader("📊 ภาพรวมคอขวด")
-
-chart_column, insight_column = st.columns([1.7, 1])
+st.subheader("📊 Bottleneck Dashboard")
+chart_column, department_column = st.columns([1.25, 1])
 
 with chart_column:
-    hourly_arrivals = (
+    hourly = (
         data.assign(hour=data["received_at"].dt.hour)
         .groupby("hour")
         .size()
-        .reindex(range(7, 21), fill_value=0)
+        .reindex(range(7, 22), fill_value=0)
+        .rename("ใบเบิก")
+        .reset_index()
+    )
+    hourly.columns = ["ชั่วโมง", "ใบเบิก"]
+    hourly["ช่วง"] = hourly["ชั่วโมง"].apply(
+        lambda hour: "🔴 หลัง Cut-off" if hour >= st.session_state.cutoff.hour else "🟢 ก่อน Cut-off"
     )
 
-    chart_data = pd.DataFrame(
-        {
-            "จำนวนใบเบิก": hourly_arrivals,
-            "หลัง Cut-off": [
-                count if hour >= st.session_state.cutoff.hour else 0
-                for hour, count in hourly_arrivals.items()
-            ],
-        }
+    hourly_chart = px.bar(
+        hourly,
+        x="ชั่วโมง",
+        y="ใบเบิก",
+        color="ช่วง",
+        color_discrete_map={
+            "🟢 ก่อน Cut-off": "#319783",
+            "🔴 หลัง Cut-off": "#dc5962",
+        },
+        title="เวลาที่รับเอกสารรายชั่วโมง",
+        text="ใบเบิก",
     )
-    chart_data.index = [f"{hour:02d}:00" for hour in chart_data.index]
+    hourly_chart.update_layout(
+        template="plotly_white",
+        height=350,
+        margin=dict(l=10, r=10, t=55, b=10),
+        legend_title_text="",
+        xaxis=dict(dtick=1, title="ชั่วโมงที่รับ"),
+        yaxis_title="จำนวนใบเบิก",
+        paper_bgcolor="rgba(255,255,255,0)",
+        plot_bgcolor="rgba(255,255,255,0)",
+    )
+    hourly_chart.update_traces(marker_line_width=0, textposition="outside")
+    st.plotly_chart(hourly_chart, use_container_width=True)
 
-    st.bar_chart(
-        chart_data,
-        color=["#2e8b83", "#ed6a5a"],
-        height=300,
-    )
-    st.caption(
-        "จำนวนใบเบิกตามชั่วโมงรับเข้า • สีแดงคือเวลาตั้งแต่ Cut-off เป็นต้นไป"
-    )
-
-with insight_column:
-    st.markdown("#### 🔎 ประเด็นจากข้อมูล")
-    st.info(
-        f"รับหลัง {st.session_state.cutoff:%H:%M} น. "
-        f"**{int(data['late'].sum())} รายการ ({late_percentage:.1f}%)** "
-        f"จากทั้งหมด {len(data)} รายการ"
-    )
-
-    late_completed = completed_data[completed_data["late"]]
-    if not late_completed.empty:
-        late_average = late_completed["lead_minutes"].mean()
-        st.warning(
-            f"ใบเบิกเย็นที่เสร็จแล้วใช้เวลาเฉลี่ย "
-            f"**{late_average / 60:.1f} ชม.**"
+with department_column:
+    if len(data):
+        by_department = (
+            data.groupby("department")
+            .agg(
+                total=("id", "count"),
+                late_count=("late", "sum"),
+            )
+            .reset_index()
         )
+        by_department["late_pct"] = (
+            by_department["late_count"] / by_department["total"] * 100
+        )
+        department_chart = px.bar(
+            by_department.sort_values("late_pct", ascending=True),
+            x="late_pct",
+            y="department",
+            orientation="h",
+            text=by_department.sort_values("late_pct", ascending=True)["late_pct"].map(
+                lambda value: f"{value:.0f}%"
+            ),
+            title="สัดส่วนใบเบิกเย็นแยกตามแผนก",
+            labels={"late_pct": "ใบเบิกเย็น (%)", "department": "แผนก"},
+            color="late_pct",
+            color_continuous_scale=["#66b99d", "#f0bd58", "#d9535d"],
+        )
+        department_chart.update_layout(
+            template="plotly_white",
+            height=350,
+            margin=dict(l=10, r=10, t=55, b=10),
+            coloraxis_showscale=False,
+            paper_bgcolor="rgba(255,255,255,0)",
+            plot_bgcolor="rgba(255,255,255,0)",
+        )
+        department_chart.update_xaxes(range=[0, 100])
+        st.plotly_chart(department_chart, use_container_width=True)
+    else:
+        st.info("ยังไม่มีข้อมูลสำหรับแสดงกราฟ")
 
-    st.caption("*ข้อมูลจำลองเริ่มต้น โปรดบันทึกข้อมูลจริงเมื่อเริ่มใช้งาน")
+late_count = int(data["late"].sum())
+st.info(
+    f"📌 มีใบเบิกหลัง Cut-off **{st.session_state.cutoff:%H:%M} น. "
+    f"{late_count:,} รายการ ({late_pct:.1f}%)** จากทั้งหมด {len(data):,} รายการ "
+    f"และมีเวลางานสูญเปล่าจากใบยกเลิกรวม **{wasted_labor:.0f} นาที**"
+)
 
+# ---------------------------------------------------------------------
+# New requisition form and status update controls
+# ---------------------------------------------------------------------
 
-# ฟอร์มสร้างใบเบิก และฟอร์มอัปเดตสถานะ
-new_column, update_column = st.columns([1, 1.35])
+new_column, update_column = st.columns([1, 1.3])
 
 with new_column:
     st.subheader("➕ รับใบเบิกใหม่")
-
     with st.form("new_requisition", clear_on_submit=True):
-        requisition_no = st.text_input(
-            "เลขที่ใบเบิก *",
-            placeholder="เช่น WR-26013",
-        )
-        department = st.text_input("แผนกผู้เบิก *")
-        requester = st.text_input("ชื่อผู้เบิก *")
+        requisition_no = st.text_input("เลขที่ใบเบิก *", placeholder="เช่น WR-26014")
+        department = st.text_input("แผนก / ไลน์ผลิต *", placeholder="เช่น PN-ผลิต-1")
+        requester = st.text_input("ชื่อผู้เบิก PN/PD *")
         item_summary = st.text_area("รายการสินค้า *", height=75)
 
         date_column, time_column = st.columns(2)
-        received_date = date_column.date_input(
-            "วันที่รับ",
-            value=date.today(),
-        )
+        received_date = date_column.date_input("วันที่รับ", value=date.today())
         received_time = time_column.time_input(
-            "เวลารับ",
+            "เวลารับเอกสาร",
             value=datetime.now().time().replace(second=0, microsecond=0),
             step=300,
         )
-
         note = st.text_input("หมายเหตุ")
-        submitted = st.form_submit_button(
-            "📥 บันทึกใบเบิก",
+        submit_new = st.form_submit_button(
+            "📥 รับใบเบิก",
             use_container_width=True,
             type="primary",
         )
 
-        if submitted:
-            required_values = [
-                requisition_no.strip(),
-                department.strip(),
-                requester.strip(),
-                item_summary.strip(),
-            ]
-
-            if not all(required_values):
-                st.error("กรุณากรอกช่องที่มี * ให้ครบ")
+        if submit_new:
+            if not all(
+                [
+                    requisition_no.strip(),
+                    department.strip(),
+                    requester.strip(),
+                    item_summary.strip(),
+                ]
+            ):
+                st.error("กรุณากรอกข้อมูลที่มี * ให้ครบ")
             else:
-                received_at = datetime.combine(received_date, received_time)
-
                 try:
                     add_requisition(
                         requisition_no,
                         department,
                         requester,
                         item_summary,
-                        received_at,
+                        datetime.combine(received_date, received_time),
                         note,
                     )
-                    st.success("บันทึกใบเบิกแล้ว")
+                    st.success("รับใบเบิกเรียบร้อยแล้ว")
                     st.rerun()
                 except sqlite3.IntegrityError:
-                    st.error("เลขที่ใบเบิกนี้มีอยู่แล้ว กรุณาตรวจสอบเลขที่")
-
+                    st.error("เลขที่ใบเบิกนี้มีอยู่แล้ว")
 
 with update_column:
-    st.subheader("🔄 อัปเดตสถานะและเวลา")
+    st.subheader("🔄 อัปเดตสถานะงาน")
 
-    active_data = data[
-        ~data["status"].isin(["completed", "cancelled"])
-    ].copy()
+    open_data = data[~data["status"].isin(["handed_over", "cancelled"])]
 
-    if active_data.empty:
-        st.info("ไม่มีรายการที่ต้องอัปเดต")
+    if open_data.empty:
+        st.info("ไม่มีรายการที่รออัปเดต")
     else:
-        options = {
+        record_options = {
             f"{row.requisition_no} · {row.department} · {row.status_label}": int(row.id)
-            for row in active_data.itertuples()
+            for row in open_data.itertuples()
         }
+        selected_label = st.selectbox("เลือกใบเบิก", list(record_options))
+        selected_row = data[data["id"] == record_options[selected_label]].iloc[0]
 
-        selected_label = st.selectbox("เลือกใบเบิก", list(options))
-        selected_row = data[data["id"] == options[selected_label]].iloc[0]
-
-        with st.form("update_status"):
+        with st.form("status_update"):
             new_status = st.selectbox(
                 "สถานะใหม่",
-                ["in_progress", "completed", "returned", "cancelled"],
-                format_func=lambda value: STATUSES[value],
+                ["in_progress", "completed", "handed_over", "cancelled"],
+                format_func=lambda value: STATUS_LABELS[value],
             )
 
-            event_date_column, event_time_column = st.columns(2)
-            event_date = event_date_column.date_input(
+            date_column, time_column = st.columns(2)
+            event_date = date_column.date_input(
                 "วันที่เกิดสถานะ",
                 value=date.today(),
                 key="event_date",
             )
-            event_time = event_time_column.time_input(
+            event_time = time_column.time_input(
                 "เวลาที่เกิดสถานะ",
                 value=datetime.now().time().replace(second=0, microsecond=0),
                 step=300,
                 key="event_time",
             )
 
-            updated_note = st.text_input(
-                "หมายเหตุ",
-                value=str(selected_row["note"] or ""),
-                key="updated_note",
-            )
+            cancel_by = ""
+            cancel_reason = ""
+            wasted_minutes = 0.0
 
-            save_status = st.form_submit_button(
-                "บันทึกสถานะและเวลา",
+            if new_status == "cancelled":
+                st.warning("การยกเลิกต้องระบุผู้สั่งยกเลิกและสาเหตุ")
+                cancel_by = st.text_input(
+                    "ผู้สั่งยกเลิก PN/PD *",
+                    placeholder="เช่น PN-ผลิต-1 / ชื่อผู้แจ้ง",
+                )
+                cancel_reason = st.text_area(
+                    "สาเหตุการยกเลิก *",
+                    placeholder="เช่น เปลี่ยนแผนผลิต หรือเบิกซ้ำ",
+                    height=70,
+                )
+                wasted_minutes = st.number_input(
+                    "เวลาคลังที่ใช้ไปก่อนยกเลิก (นาที) *",
+                    min_value=0.0,
+                    step=5.0,
+                    value=0.0,
+                    help="ใช้ค่านี้คำนวณ Wasted Labor Time",
+                )
+
+            update_note = st.text_input(
+                "หมายเหตุเพิ่มเติม",
+                value=str(selected_row["note"] or ""),
+            )
+            submit_update = st.form_submit_button(
+                "บันทึกสถานะ",
                 use_container_width=True,
                 type="primary",
             )
 
-            if save_status:
+            if submit_update:
                 event_at = datetime.combine(event_date, event_time)
 
                 if event_at < selected_row["received_at"].to_pydatetime():
                     st.error("เวลาสถานะต้องไม่ก่อนเวลารับเอกสาร")
+                elif new_status == "cancelled" and (
+                    not cancel_by.strip()
+                    or not cancel_reason.strip()
+                    or wasted_minutes <= 0
+                ):
+                    st.error(
+                        "กรุณาระบุผู้สั่งยกเลิก สาเหตุ และเวลางานที่สูญเปล่าให้ครบ"
+                    )
                 else:
-                    update_status(
+                    save_status(
                         int(selected_row["id"]),
                         new_status,
                         event_at,
-                        updated_note,
+                        update_note,
+                        cancel_by,
+                        cancel_reason,
+                        wasted_minutes,
                     )
-                    st.success("อัปเดตสถานะแล้ว")
+                    st.success("อัปเดตสถานะเรียบร้อยแล้ว")
                     st.rerun()
 
 
-# ตารางรายการและตัวกรอง
+# ---------------------------------------------------------------------
+# Audio tick: embedded Web Audio API, no external audio file
+# ---------------------------------------------------------------------
+
+st.components.v1.html(
+    """
+    <script>
+    (() => {
+      // Browser audio is allowed after a user gesture. This listener is attached
+      // to the parent Streamlit page so clicks on Streamlit buttons trigger it.
+      const parentWindow = window.parent;
+      if (parentWindow.__warehouseTickInstalled) return;
+      parentWindow.__warehouseTickInstalled = true;
+
+      parentWindow.playWarehouseTick = function () {
+        try {
+          const AudioContext =
+            parentWindow.AudioContext || parentWindow.webkitAudioContext;
+          if (!AudioContext) return;
+
+          const context = new AudioContext();
+          const oscillator = context.createOscillator();
+          const gain = context.createGain();
+          const now = context.currentTime;
+
+          oscillator.type = "sine";
+          oscillator.frequency.setValueAtTime(800, now);
+          oscillator.frequency.exponentialRampToValueAtTime(400, now + 0.04);
+          gain.gain.setValueAtTime(0.12, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.04);
+
+          oscillator.connect(gain);
+          gain.connect(context.destination);
+          oscillator.start(now);
+          oscillator.stop(now + 0.04);
+          oscillator.onended = () => context.close();
+        } catch (error) {
+          // Audio is a convenience; browser settings may disable playback.
+        }
+      };
+
+      parentWindow.document.addEventListener("click", (event) => {
+        const button = event.target.closest("button");
+        if (!button) return;
+
+        const label = (button.innerText || "").trim();
+        const isAction =
+          label.includes("รับใบเบิก") ||
+          label.includes("บันทึกสถานะ") ||
+          label.includes("Export");
+
+        if (isAction && parentWindow.playWarehouseTick) {
+          parentWindow.playWarehouseTick();
+        }
+      }, true);
+    })();
+    </script>
+    """,
+    height=0,
+    width=0,
+)
+
+
+# ---------------------------------------------------------------------
+# Filterable register and CSV/Excel export
+# ---------------------------------------------------------------------
+
 st.divider()
-st.subheader("📋 รายการเอกสาร")
+st.subheader("📋 ทะเบียนใบเบิก")
 
-filter1, filter2, filter3 = st.columns([1, 1, 1.3])
-
+filter1, filter2, filter3 = st.columns([1, 1, 1.4])
 status_filter = filter1.multiselect(
     "กรองสถานะ",
-    list(STATUSES),
-    format_func=lambda value: STATUSES[value],
+    list(STATUS_LABELS),
+    format_func=lambda value: STATUS_LABELS[value],
 )
-late_filter = filter2.selectbox(
-    "กรองแท็ก",
+tag_filter = filter2.selectbox(
+    "กรองใบเบิกเย็น",
     ["ทั้งหมด", "🔴 ใบเบิกเย็น", "🟢 ในเวลาตัดรอบ"],
 )
-search_text = filter3.text_input(
-    "ค้นหาเลขที่ / แผนก / ผู้เบิก / รายการ"
+search = filter3.text_input(
+    "ค้นหาเลขที่ / แผนก / ผู้เบิก / รายการ",
+    placeholder="พิมพ์คำค้นหา",
 )
 
-filtered_data = data.copy()
+filtered = data.copy()
 
 if status_filter:
-    filtered_data = filtered_data[
-        filtered_data["status"].isin(status_filter)
-    ]
+    filtered = filtered[filtered["status"].isin(status_filter)]
 
-if late_filter == "🔴 ใบเบิกเย็น":
-    filtered_data = filtered_data[filtered_data["late"]]
-elif late_filter == "🟢 ในเวลาตัดรอบ":
-    filtered_data = filtered_data[~filtered_data["late"]]
+if tag_filter == "🔴 ใบเบิกเย็น":
+    filtered = filtered[filtered["late"]]
+elif tag_filter == "🟢 ในเวลาตัดรอบ":
+    filtered = filtered[~filtered["late"]]
 
-if search_text.strip():
-    searchable_columns = [
+if search.strip():
+    search_columns = [
         "requisition_no",
         "department",
         "requester",
         "item_summary",
+        "cancellation_by",
+        "cancellation_reason",
     ]
-    matches = (
-        filtered_data[searchable_columns]
+    search_mask = (
+        filtered[search_columns]
         .fillna("")
         .astype(str)
         .apply(
             lambda column: column.str.contains(
-                search_text.strip(),
+                search.strip(),
                 case=False,
                 regex=False,
             )
         )
         .any(axis=1)
     )
-    filtered_data = filtered_data[matches]
+    filtered = filtered[search_mask]
 
 display_columns = [
     "requisition_no",
@@ -581,75 +793,107 @@ display_columns = [
     "received_at",
     "in_progress_at",
     "completed_at",
-    "returned_at",
+    "handed_over_at",
     "cancelled_at",
     "status_label",
     "tag",
-    "lead_minutes",
+    "processing_minutes",
+    "waiting_minutes",
+    "cancellation_by",
+    "cancellation_reason",
+    "cancelled_labor_minutes",
     "note",
 ]
 
-table = filtered_data[display_columns].copy()
+table = filtered[display_columns].copy()
 table.columns = [
     "เลขที่ใบเบิก",
-    "แผนก",
+    "แผนก/ไลน์",
     "ผู้เบิก",
     "รายการ",
     "📥 รับเอกสาร",
-    "📦 กำลังจัด",
-    "✅ จัดเสร็จ",
-    "🔄 รับคืน",
-    "❌ ยกเลิก",
+    "🟡 เริ่มจัด",
+    "🔵 จัดเสร็จ",
+    "🟢 PD รับของ",
+    "❌ ยกเลิกเมื่อ",
     "สถานะ",
     "แท็ก",
-    "Lead time (นาที)",
+    "เวลาจัด (นาที)",
+    "เวลารอ PD (นาที)",
+    "ผู้สั่งยกเลิก",
+    "สาเหตุยกเลิก",
+    "แรงงานสูญเปล่า (นาที)",
     "หมายเหตุ",
 ]
 
-timestamp_columns = [
+for column in [
     "📥 รับเอกสาร",
-    "📦 กำลังจัด",
-    "✅ จัดเสร็จ",
-    "🔄 รับคืน",
-    "❌ ยกเลิก",
-]
-
-for column in timestamp_columns:
+    "🟡 เริ่มจัด",
+    "🔵 จัดเสร็จ",
+    "🟢 PD รับของ",
+    "❌ ยกเลิกเมื่อ",
+]:
     table[column] = (
         pd.to_datetime(table[column], errors="coerce")
         .dt.strftime("%d/%m/%Y %H:%M")
         .fillna("—")
     )
 
-table["Lead time (นาที)"] = table["Lead time (นาที)"].round().astype("Int64")
+for column in [
+    "เวลาจัด (นาที)",
+    "เวลารอ PD (นาที)",
+    "แรงงานสูญเปล่า (นาที)",
+]:
+    table[column] = table[column].round(0).astype("Int64")
 
-st.caption(f"แสดง {len(table)} จาก {len(data)} รายการ")
+st.caption(f"แสดง {len(table):,} จาก {len(data):,} รายการ")
 
 st.dataframe(
     table,
     use_container_width=True,
     hide_index=True,
-    height=410,
+    height=440,
     column_config={
+        "สถานะ": st.column_config.TextColumn("สถานะ"),
         "แท็ก": st.column_config.TextColumn(
-            help="คำนวณจากเวลารับเอกสารเทียบกับ Cut-off"
-        ),
-        "Lead time (นาที)": st.column_config.NumberColumn(
-            format="%d นาที"
+            "แท็ก",
+            help="ใบเบิกเย็นคือรายการที่รับหลัง Cut-off",
         ),
     },
 )
 
-st.download_button(
-    "⬇️ ดาวน์โหลดรายการเป็น CSV",
-    data=table.to_csv(index=False).encode("utf-8-sig"),
-    file_name=f"warehouse_requisitions_{date.today():%Y%m%d}.csv",
+csv_bytes = table.to_csv(index=False).encode("utf-8-sig")
+excel_buffer = None
+try:
+    from io import BytesIO
+
+    excel_buffer = BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+        table.to_excel(writer, index=False, sheet_name="Warehouse Tracking")
+    excel_buffer.seek(0)
+except Exception:
+    excel_buffer = None
+
+export_columns = st.columns(2)
+export_columns[0].download_button(
+    "📥 Export Data to CSV",
+    data=csv_bytes,
+    file_name=f"warehouse_tracking_{date.today():%Y%m%d}.csv",
     mime="text/csv",
+    use_container_width=True,
 )
+
+if excel_buffer is not None:
+    export_columns[1].download_button(
+        "📊 Export Data to Excel",
+        data=excel_buffer,
+        file_name=f"warehouse_tracking_{date.today():%Y%m%d}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
 
 st.caption(
-    "เวลาจัดคำนวณจากรับเอกสารจนจัดเสร็จ • ใช้เวลาท้องถิ่นของเครื่องที่รันแอป "
-    "• หากบันทึกสถานะเดิมซ้ำ ระบบใช้เวลาล่าสุด"
+    "Processing Lead Time = รับเอกสารถึงจัดเสร็จ • "
+    "Waiting Time = จัดเสร็จถึง PD รับของ • "
+    "Wasted Labor Time = เวลาที่คลังทำงานไปก่อนใบเบิกถูกยกเลิก"
 )
-
-   
