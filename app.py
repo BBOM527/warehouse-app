@@ -101,26 +101,7 @@ def initialize_database():
             seed_mock_data(connection)
 
 
-def seed_mock_data(connection):
-    """Insert sample records so charts and tables are populated on first run."""
-    today = date.today()
-    now = datetime.now().isoformat(timespec="seconds")
 
-    samples = [
-        ("WR-26001", "PN-ผลิต-1", "สมชาย", "น็อต M8, แหวนรอง", 8, 12, "handed_over", 9, 5, 9, 45, None, None, 0, ""),
-        ("WR-26002", "PD-ซ่อมบำรุง", "วิภา", "น้ำมันหล่อลื่น", 9, 35, "handed_over", 10, 42, 11, 20, None, None, 0, ""),
-        ("WR-26003", "PN-ผลิต-2", "อนันต์", "กล่องบรรจุภัณฑ์", 10, 48, "completed", 12, 20, None, None, None, None, 0, "จัดเสร็จ รอ PD"),
-        ("WR-26004", "PD-คุณภาพ", "มาลี", "ถุงมือไนไตร", 13, 10, "handed_over", 14, 2, 15, 10, None, None, 0, ""),
-        ("WR-26005", "PN-ผลิต-1", "สมชาย", "อะไหล่สายพาน", 15, 55, "in_progress", None, None, None, None, None, None, 0, "ต้องใช้พรุ่งนี้เช้า"),
-        ("WR-26006", "PD-ซ่อมบำรุง", "ปรีชา", "ลูกปืน 6204", 16, 42, "received", None, None, None, None, None, None, 0, "รับหลัง cut-off"),
-        ("WR-26007", "PN-ผลิต-2", "วิภา", "เทปกาว, ฟิล์มยืด", 17, 18, "handed_over", 18, 16, 18, 48, None, None, 0, "รับหลัง cut-off"),
-        ("WR-26008", "PD-คลังสินค้า", "กิตติ", "ป้ายฉลาก", 14, 25, "cancelled", None, None, None, None, "PN-ผลิต-1", "เปลี่ยนแผนการผลิต", 35, ""),
-        ("WR-26009", "PN-ผลิต-1", "มาลี", "ถังพลาสติก", 11, 20, "cancelled", None, None, None, None, "PD-ผลิต-1", "เบิกซ้ำกับใบเดิม", 20, ""),
-        ("WR-26010", "PD-คุณภาพ", "อนันต์", "อุปกรณ์ตรวจวัด", 16, 55, "handed_over", 17, 10, 18, 5, None, None, 0, "รับหลัง cut-off"),
-        ("WR-26011", "PN-ผลิต-2", "ปรีชา", "วัตถุดิบ A-12", 8, 50, "handed_over", 9, 15, 10, 10, None, None, 0, ""),
-        ("WR-26012", "PD-ซ่อมบำรุง", "กิตติ", "ซีลยาง", 15, 5, "completed", 15, 25, None, None, None, None, 0, "จัดเสร็จ รอ PD"),
-        ("WR-26013", "PN-ผลิต-1", "สมชาย", "โฟมกันกระแทก", 16, 35, "cancelled", None, None, None, None, "PN-ผลิต-1", "ยกเลิกกะทันหัน", 42, "ใบเบิกเย็นและยกเลิก"),
-    ]
 
     for index, sample in enumerate(samples):
         (
@@ -290,7 +271,6 @@ st.set_page_config(
 if "cutoff" not in st.session_state:
     st.session_state.cutoff = CUTOFF_DEFAULT
 
-initialize_database()
 
 st.markdown(
     """
