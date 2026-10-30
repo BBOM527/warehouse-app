@@ -1,910 +1,1306 @@
-"""Warehouse Document Tracking & Bottleneck Analytics
-Run: streamlit run app.py
-
-ติดตั้ง dependencies:
-    pip install streamlit pandas plotly openpyxl
-"""
-
-from datetime import date, datetime, time
-from io import BytesIO
-from pathlib import Path
-import os
-import sqlite3
-
-import pandas as pd
-import plotly.express as px
-import streamlit as st
-
-
-DB_PATH = Path(
-    os.getenv(
-        "WAREHOUSE_DB",
-        str(Path(__file__).resolve().with_name("warehouse_tracking.db")),
-    )
-)
-DEFAULT_CUTOFF = time(16, 30)
-
-STATUS_LABELS = {
-    "received": "📥 รับเอกสาร",
-    "in_progress": "🟡 กำลังจัด",
-    "completed": "🔵 จัดเสร็จ / รอ PD รับ",
-    "handed_over": "🟢 PD มารับแล้ว",
-    "cancelled": "🔴 ยกเลิก",
-}
-
-TIMESTAMP_COLUMNS = {
-    "in_progress": "in_progress_at",
-    "completed": "completed_at",
-    "handed_over": "handed_over_at",
-    "cancelled": "cancelled_at",
-}
-
-# เลขที่เหล่านี้เป็นรายการตัวอย่างจากเวอร์ชันก่อน
-# ลบข้อมูลจำลองชุดเดิมเพียงครั้งเดียว โดยไม่ลบใบเบิกจริงที่บันทึกภายหลัง
-LEGACY_SAMPLE_NUMBERS = [f"WR-260{i:02d}" for i in range(1, 14)]
-LEGACY_CLEANUP_KEY = "legacy_mock_rows_removed_v1"
-
-
-def get_connection():
-    connection = sqlite3.connect(DB_PATH, timeout=10)
-    connection.row_factory = sqlite3.Row
-    return connection
-
-
-def initialize_database():
-    """สร้างเฉพาะโครงสร้างตาราง และล้างข้อมูลจำลองเก่าที่เคยสร้างไว้"""
-    with get_connection() as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS requisitions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                requisition_no TEXT NOT NULL UNIQUE,
-                department TEXT NOT NULL,
-                requester TEXT NOT NULL,
-                item_summary TEXT NOT NULL,
-                received_at TEXT NOT NULL,
-                in_progress_at TEXT,
-                completed_at TEXT,
-                handed_over_at TEXT,
-                cancelled_at TEXT,
-                cancellation_by TEXT,
-                cancellation_reason TEXT,
-                cancelled_labor_minutes REAL DEFAULT 0,
-                status TEXT NOT NULL DEFAULT 'received',
-                note TEXT DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-
-        # รองรับฐานข้อมูลเดิมที่สร้างด้วยโค้ดรุ่นก่อน
-        existing_columns = {
-            row["name"]
-            for row in connection.execute("PRAGMA table_info(requisitions)")
-        }
-        migrations = {
-            "handed_over_at": "TEXT",
-            "cancellation_by": "TEXT",
-            "cancellation_reason": "TEXT",
-            "cancelled_labor_minutes": "REAL DEFAULT 0",
-        }
-
-        for column, definition in migrations.items():
-            if column not in existing_columns:
-                connection.execute(
-                    f"ALTER TABLE requisitions ADD COLUMN {column} {definition}"
-                )
-
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS app_metadata (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-            """
-        )
-
-        cleanup_done = connection.execute(
-            "SELECT value FROM app_metadata WHERE key = ?",
-            (LEGACY_CLEANUP_KEY,),
-        ).fetchone()
-
-        if cleanup_done is None:
-            placeholders = ",".join("?" for _ in LEGACY_SAMPLE_NUMBERS)
-            connection.execute(
-                f"""
-                DELETE FROM requisitions
-                WHERE requisition_no IN ({placeholders})
-                """,
-                LEGACY_SAMPLE_NUMBERS,
-            )
-            connection.execute(
-                "INSERT INTO app_metadata (key, value) VALUES (?, ?)",
-                (LEGACY_CLEANUP_KEY, "done"),
-            )
-
-
-def load_data():
-    with get_connection() as connection:
-        data = pd.read_sql_query(
-            "SELECT * FROM requisitions ORDER BY received_at DESC, id DESC",
-            connection,
-        )
-
-    for column in [
-        "received_at",
-        "in_progress_at",
-        "completed_at",
-        "handed_over_at",
-        "cancelled_at",
-    ]:
-        data[column] = pd.to_datetime(data[column], errors="coerce")
-
-    cutoff = st.session_state.cutoff
-    data["late"] = data["received_at"].apply(
-        lambda value: value.time() > cutoff if pd.notna(value) else False
-    )
-    data["processing_minutes"] = (
-        data["completed_at"] - data["received_at"]
-    ).dt.total_seconds() / 60
-    data["waiting_minutes"] = (
-        data["handed_over_at"] - data["completed_at"]
-    ).dt.total_seconds() / 60
-    data["status_label"] = data["status"].map(STATUS_LABELS)
-    data["tag"] = data["late"].map(
-        {
-            True: "🔴 ใบเบิกเย็น/ส่งช้า",
-            False: "🟢 ในเวลาตัดรอบ",
-        }
-    )
-
-    return data
-
-
-def add_requisition(number, department, requester, items, received_at, note):
-    now = datetime.now().isoformat(timespec="seconds")
-
-    with get_connection() as connection:
-        connection.execute(
-            """
-            INSERT INTO requisitions (
-                requisition_no, department, requester, item_summary,
-                received_at, status, note, created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, 'received', ?, ?, ?)
-            """,
-            (
-                number.strip(),
-                department.strip(),
-                requester.strip(),
-                items.strip(),
-                received_at.isoformat(timespec="minutes"),
-                note.strip(),
-                now,
-                now,
-            ),
-        )
-
-
-def update_status(
-    record_id,
-    status,
-    event_at,
-    note,
-    cancellation_by="",
-    cancellation_reason="",
-    wasted_minutes=0,
-):
-    timestamp_column = TIMESTAMP_COLUMNS[status]
-    now = datetime.now().isoformat(timespec="seconds")
-
-    with get_connection() as connection:
-        connection.execute(
-            f"""
-            UPDATE requisitions
-            SET status = ?,
-                {timestamp_column} = ?,
-                note = ?,
-                cancellation_by = ?,
-                cancellation_reason = ?,
-                cancelled_labor_minutes = ?,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (
-                status,
-                event_at.isoformat(timespec="minutes"),
-                note.strip(),
-                cancellation_by.strip() or None,
-                cancellation_reason.strip() or None,
-                float(wasted_minutes or 0),
-                now,
-                record_id,
-            ),
-        )
-
-
-# ---------------------------------------------------------------------
-# Streamlit application
-# ---------------------------------------------------------------------
-
-st.set_page_config(
-    page_title="PK Warehouse | Document Flow",
-    page_icon="📦",
-    layout="wide",
-)
-
-if "cutoff" not in st.session_state:
-    st.session_state.cutoff = DEFAULT_CUTOFF
-
-initialize_database()
-
-st.markdown(
-    """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
-
-    html, body, [class*="css"] {
-        font-family: 'Prompt', sans-serif;
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#101d2d">
+  <title>PK Warehouse | JOB Tracking</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #162538;
+      --muted: #748195;
+      --line: #e4eaf1;
+      --surface: rgba(255, 255, 255, .83);
+      --navy: #14253a;
+      --teal: #187e79;
+      --amber: #bc790a;
+      --blue: #3474c4;
+      --green: #19845f;
+      --red: #c2414d;
+      --shadow: 0 14px 38px rgba(24, 46, 72, .09);
+      --radius: 20px;
     }
 
-    .stApp {
-        background:
-            radial-gradient(ellipse at 8% 0%, rgba(78,153,165,.13), transparent 32%),
-            radial-gradient(ellipse at 94% 7%, rgba(96,122,190,.12), transparent 30%),
-            #f3f6fa;
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background:
+        radial-gradient(ellipse at 8% 0%, rgba(76, 153, 165, .14), transparent 34%),
+        radial-gradient(ellipse at 96% 8%, rgba(91, 117, 185, .12), transparent 30%),
+        #f3f6fa;
     }
 
-    .block-container {
-        max-width: 1540px;
-        padding-top: 1.3rem;
-        padding-bottom: 2rem;
+    button, input, textarea, select { font: inherit; }
+    button { cursor: pointer; }
+
+    .shell {
+      width: min(1500px, calc(100% - 36px));
+      margin: 0 auto;
+      padding: 26px 0 48px;
     }
 
     .hero {
-        padding: 25px 30px;
-        border: 1px solid rgba(255,255,255,.48);
-        border-radius: 22px;
-        color: #f9fbff;
-        background: linear-gradient(115deg, #132b41, #1b6670);
-        box-shadow: 0 18px 45px rgba(29,58,81,.17);
-        margin-bottom: 20px;
+      position: relative;
+      overflow: hidden;
+      padding: 27px 30px;
+      border: 1px solid rgba(255,255,255,.42);
+      border-radius: 25px;
+      color: white;
+      background: linear-gradient(115deg, #132940, #176d70);
+      box-shadow: 0 20px 48px rgba(25, 54, 78, .2);
     }
 
-    .hero p {
-        margin: 2px 0 0;
-        color: #d6e6ef;
+    .hero::after {
+      content: "";
+      position: absolute;
+      width: 250px;
+      height: 250px;
+      right: -45px;
+      top: -140px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.08);
     }
 
-    [data-testid="stMetric"] {
-        background: rgba(255,255,255,.76);
-        border: 1px solid rgba(255,255,255,.95);
-        border-radius: 18px;
-        padding: 16px 18px;
-        box-shadow: 0 8px 24px rgba(26,48,71,.07);
-        backdrop-filter: blur(12px);
+    .hero h1 { margin: 0 0 7px; font-size: clamp(25px, 4vw, 36px); }
+    .hero p { margin: 0; color: #d5e7eb; line-height: 1.6; }
+    .hero-meta { margin-top: 17px; display: flex; gap: 9px; flex-wrap: wrap; }
+
+    .hero-chip {
+      padding: 7px 11px;
+      border: 1px solid rgba(255,255,255,.2);
+      border-radius: 999px;
+      background: rgba(255,255,255,.1);
+      color: #eef8fa;
+      font-size: 12px;
     }
 
-    [data-testid="stMetricValue"] {
-        color: #172f46;
+    .section-heading {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 12px;
+      margin: 27px 2px 13px;
     }
 
-    div.stButton > button,
-    div.stFormSubmitButton > button,
-    div.stDownloadButton > button {
-        border-radius: 12px;
-        transition: transform .12s ease, box-shadow .15s ease;
-        box-shadow: 0 5px 14px rgba(28,73,103,.12);
+    .section-heading h2 { margin: 0; font-size: 19px; }
+    .section-heading p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+
+    .card, .kpi {
+      border: 1px solid rgba(255,255,255,.92);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
     }
 
-    div.stButton > button:hover,
-    div.stFormSubmitButton > button:hover,
-    div.stDownloadButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 9px 20px rgba(28,73,103,.2);
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 13px;
+      margin-top: 18px;
     }
 
-    div.stButton > button:active,
-    div.stFormSubmitButton > button:active,
-    div.stDownloadButton > button:active {
-        transform: scale(.98);
+    .kpi { padding: 17px 18px; }
+    .kpi-label { color: var(--muted); font-size: 12px; font-weight: 600; }
+    .kpi-value { margin-top: 8px; font-size: clamp(20px, 2.5vw, 29px); font-weight: 750; letter-spacing: -.5px; }
+    .kpi-foot { margin-top: 4px; color: #8a96a6; font-size: 11px; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(300px, .88fr) minmax(0, 1.65fr);
+      gap: 15px;
+      align-items: start;
     }
 
-    div[data-testid="stForm"] {
-        background: rgba(255,255,255,.72);
-        border: 1px solid rgba(255,255,255,.95);
-        border-radius: 18px;
-        padding: 18px;
-        box-shadow: 0 8px 26px rgba(26,48,71,.06);
+    .card { padding: 19px; }
+    .card h3 { margin: 0 0 5px; font-size: 16px; }
+    .subtext { margin: 0 0 16px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+
+    .field { margin: 13px 0; }
+    .field label { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 650; }
+    .field small { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
+
+    input, textarea, select {
+      width: 100%;
+      border: 1px solid #dce4ed;
+      border-radius: 11px;
+      padding: 10px 12px;
+      color: var(--ink);
+      background: rgba(255,255,255,.9);
+      outline: none;
+      transition: border-color .15s, box-shadow .15s;
     }
 
-    div[data-testid="stDataFrame"] {
-        border: 1px solid #e5ebf1;
-        border-radius: 16px;
-        overflow: hidden;
-        box-shadow: 0 8px 22px rgba(26,48,71,.06);
+    input:focus, textarea:focus, select:focus {
+      border-color: #5b9da0;
+      box-shadow: 0 0 0 3px rgba(55, 140, 139, .12);
     }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
 
-st.markdown(
-    """
-    <div class="hero">
-        <h1>📦 PK Warehouse · Document Flow</h1>
-        <p>ติดตามทุกช่วงเวลา • จัดการคิวหน้างาน • บันทึกข้อมูลจากการทำงานจริง</p>
+    textarea { resize: vertical; min-height: 104px; line-height: 1.55; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .btn {
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      gap: 7px;
+      min-height: 40px;
+      padding: 9px 13px;
+      border: 1px solid transparent;
+      border-radius: 11px;
+      color: white;
+      background: var(--navy);
+      font-weight: 650;
+      font-size: 12px;
+      box-shadow: 0 5px 14px rgba(28, 55, 78, .12);
+      transition: transform .12s ease, box-shadow .15s ease, filter .15s ease;
+    }
+
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 9px 20px rgba(28,55,78,.18); filter: brightness(1.04); }
+    .btn:active { transform: scale(.98); }
+    .btn.teal { background: var(--teal); }
+    .btn.blue { background: var(--blue); }
+    .btn.green { background: var(--green); }
+    .btn.red { background: var(--red); }
+    .btn.amber { background: var(--amber); }
+    .btn.soft { color: #34475e; background: #f0f4f8; border-color: #e1e8ef; box-shadow: none; }
+    .btn.small { min-height: 31px; padding: 6px 9px; font-size: 11px; border-radius: 9px; }
+    .btn.block { width: 100%; }
+    .btn:disabled { cursor: not-allowed; opacity: .48; transform: none; }
+
+    .status-callout {
+      padding: 11px 12px;
+      border: 1px solid #e8edf2;
+      border-radius: 12px;
+      background: rgba(248,250,252,.8);
+      color: #596a7d;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .warning {
+      padding: 11px 12px;
+      border: 1px solid #f3d28a;
+      border-radius: 12px;
+      color: #795311;
+      background: #fff8e8;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .message {
+      display: none;
+      margin: 12px 0 0;
+      padding: 10px 12px;
+      border-radius: 11px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .message.show { display: block; }
+    .message.success { color: #116447; background: #e8f6ef; border: 1px solid #c8ead9; }
+    .message.error { color: #a22e3a; background: #fff0f1; border: 1px solid #f1c9cd; }
+
+    .queue { display: grid; gap: 11px; }
+    .job-card {
+      padding: 14px;
+      border: 1px solid #e5ebf1;
+      border-radius: 15px;
+      background: rgba(255,255,255,.8);
+    }
+
+    .job-top { display: flex; justify-content: space-between; gap: 10px; align-items: start; }
+    .job-number { font-size: 16px; font-weight: 750; }
+    .job-dept { margin-top: 3px; color: var(--muted); font-size: 12px; }
+    .badge {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 9px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .badge.received { color: #73510e; background: #fff2ce; }
+    .badge.in_progress { color: #73510e; background: #fff2ce; }
+    .badge.completed { color: #245998; background: #e7f1ff; }
+    .badge.handed_over { color: #176648; background: #e2f5eb; }
+    .badge.cancelled { color: #9e303a; background: #fdebed; }
+
+    .late-tag {
+      display: inline-block;
+      margin-top: 9px;
+      padding: 5px 8px;
+      border-radius: 8px;
+      color: #a5323d;
+      background: #fff0f1;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .timeline {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 7px;
+      margin: 13px 0;
+    }
+
+    .time-cell { padding: 8px; border-radius: 10px; background: #f5f7fa; }
+    .time-cell span { display: block; color: var(--muted); font-size: 9px; }
+    .time-cell strong { display: block; margin-top: 4px; font-size: 10px; font-weight: 650; overflow-wrap: anywhere; }
+
+    .job-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+    .table-tools { display: grid; grid-template-columns: 1fr 1fr 1.5fr; gap: 9px; margin-bottom: 12px; }
+    .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 14px; background: rgba(255,255,255,.8); }
+    table { width: 100%; min-width: 1050px; border-collapse: collapse; font-size: 11px; }
+    th, td { padding: 10px 11px; border-bottom: 1px solid #e9eef3; text-align: left; vertical-align: top; }
+    th { position: sticky; top: 0; z-index: 1; color: #667589; background: #f7f9fb; font-weight: 700; white-space: nowrap; }
+    tbody tr:hover { background: rgba(235,243,247,.55); }
+    td.muted { color: #8b97a6; }
+    .empty {
+      padding: 32px 16px;
+      border: 1px dashed #cad5df;
+      border-radius: 15px;
+      color: #728094;
+      background: rgba(250,252,254,.7);
+      text-align: center;
+      font-size: 13px;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      background: rgba(13, 25, 39, .55);
+      backdrop-filter: blur(5px);
+    }
+
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      width: min(650px, 100%);
+      max-height: min(90vh, 850px);
+      overflow: auto;
+      padding: 22px;
+      border: 1px solid rgba(255,255,255,.7);
+      border-radius: 20px;
+      background: #fff;
+      box-shadow: 0 25px 70px rgba(0,0,0,.25);
+    }
+
+    .modal h2 { margin: 0 0 5px; font-size: 20px; }
+    .modal-sub { margin: 0 0 17px; color: var(--muted); font-size: 12px; }
+    .evidence { border: 1px solid #e6ebf0; border-radius: 13px; overflow: hidden; }
+    .evidence-row { display: grid; grid-template-columns: 185px 1fr; gap: 10px; padding: 11px 13px; border-bottom: 1px solid #edf0f3; font-size: 12px; }
+    .evidence-row:last-child { border-bottom: 0; }
+    .evidence-row span { color: var(--muted); }
+    .evidence-row strong { overflow-wrap: anywhere; }
+    .modal-actions { display: flex; justify-content: end; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+
+    #scanner-box { display: none; margin-top: 12px; }
+    #scanner-box.open { display: block; }
+    #scanner-video { width: 100%; max-height: 270px; border-radius: 13px; background: #101820; object-fit: cover; }
+    .scan-note { margin: 7px 0 0; color: var(--muted); font-size: 11px; }
+
+    .footer-note { margin: 18px 2px 0; color: #8a96a6; font-size: 11px; line-height: 1.6; }
+
+    @media (max-width: 1020px) {
+      .kpis { grid-template-columns: repeat(3, 1fr); }
+      .layout { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 650px) {
+      .shell { width: min(100% - 22px, 1500px); padding-top: 12px; }
+      .hero { padding: 21px 18px; border-radius: 19px; }
+      .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+      .kpi { padding: 13px; }
+      .table-tools { grid-template-columns: 1fr; }
+      .timeline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .row { grid-template-columns: 1fr; gap: 0; }
+      .evidence-row { grid-template-columns: 1fr; gap: 3px; }
+    }
+
+    @media print {
+      body * { visibility: hidden !important; }
+      #print-slip, #print-slip * { visibility: visible !important; }
+      #print-slip {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        padding: 24px;
+        color: #111;
+        background: #fff;
+      }
+      .modal-actions { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <h1>📦 PK Warehouse · JOB Tracking</h1>
+      <p>บันทึกเวลารับงานและติดตามสถานะใบเบิก เพื่อให้มี Timeline อ้างอิงการทำงาน</p>
+      <div class="hero-meta">
+        <span class="hero-chip">🕓 Cut-off <strong id="cutoff-chip">16:00</strong></span>
+        <span class="hero-chip">🗂️ บันทึกเฉพาะ JOB และแผนก/ไลน์</span>
+        <span class="hero-chip">💾 เก็บข้อมูลไว้ในเบราว์เซอร์เครื่องนี้</span>
+      </div>
+    </header>
+
+    <section class="kpis" aria-label="สรุปยอดงาน">
+      <article class="kpi">
+        <div class="kpi-label">📄 JOB ทั้งหมด</div>
+        <div class="kpi-value" id="kpi-total">0</div>
+        <div class="kpi-foot">รายการที่บันทึกไว้</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">🔴 ใบเบิกเย็น</div>
+        <div class="kpi-value" id="kpi-late">0%</div>
+        <div class="kpi-foot">รับหลังเวลา Cut-off</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">⏱️ เวลาจัดเฉลี่ย</div>
+        <div class="kpi-value" id="kpi-pick">—</div>
+        <div class="kpi-foot">รับเรื่องถึงจัดเสร็จ</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">🕒 เวลารอ PD เฉลี่ย</div>
+        <div class="kpi-value" id="kpi-wait">—</div>
+        <div class="kpi-foot">จัดเสร็จถึงรับของ</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">❌ ยกเลิก / เสียเวลา</div>
+        <div class="kpi-value" id="kpi-cancel">0 / 0 นาที</div>
+        <div class="kpi-foot">เวลาที่ใช้จัดก่อนถูกยกเลิก</div>
+      </article>
+    </section>
+
+    <section class="layout" style="margin-top: 19px;">
+      <div class="card">
+        <h3>📥 รับ JOB เข้า</h3>
+        <p class="subtext">เลือกรูปแบบการบันทึกที่สะดวก ระบบจะประทับเวลารับจากนาฬิกาเครื่อง</p>
+
+        <div class="field">
+          <label for="department">แผนก / ไลน์ผลิตที่เบิก *</label>
+          <input id="department" type="text" placeholder="เช่น PD-Line 1" autocomplete="organization">
+        </div>
+
+        <div class="field">
+          <label for="bulk-input">📋 วางหลาย JOB พร้อมกัน</label>
+          <textarea id="bulk-input" placeholder="วางเลข JOB แยกบรรทัดได้&#10;JOB-6901&#10;JOB-6902&#10;หรือ: JOB-6903, PD-Line 2"></textarea>
+          <small>ถ้าระบุแค่ JOB ระบบจะใช้แผนก/ไลน์ด้านบนกับทุกรายการ</small>
+        </div>
+        <button class="btn teal block" id="bulk-submit">📋 บันทึกรับเรื่องทั้งหมด</button>
+
+        <div class="field" style="margin-top:20px">
+          <label for="quick-job">⌨️ พิมพ์ด่วน</label>
+          <input id="quick-job" type="text" inputmode="numeric" placeholder="พิมพ์เลข 4 หลัก หรือ JOB-6901" autocomplete="off">
+          <small>กด Enter เพื่อบันทึกทันที และช่องจะพร้อมรับรายการถัดไป</small>
+        </div>
+        <button class="btn block" id="quick-submit">รับ JOB ด่วน</button>
+
+        <div class="field" style="margin-top:20px">
+          <label>📷 สแกนบาร์โค้ด / QR Code</label>
+          <div class="btn-row">
+            <button class="btn soft" id="camera-start">เปิดกล้องสแกน</button>
+            <button class="btn soft" id="camera-stop" hidden>ปิดกล้อง</button>
+          </div>
+          <div id="scanner-box">
+            <video id="scanner-video" playsinline muted></video>
+            <p class="scan-note" id="scanner-note">หันกล้องไปที่บาร์โค้ดหรือ QR Code ของ JOB</p>
+          </div>
+        </div>
+
+        <div id="input-message" class="message" role="status"></div>
+      </div>
+
+      <div class="card">
+        <h3>⚡ คิวงานที่ต้องดำเนินการ</h3>
+        <p class="subtext">กดปุ่มเมื่อเปลี่ยนขั้นตอน ระบบจะบันทึกเวลาปัจจุบันและเสียงตอบรับ</p>
+        <div id="active-queue" class="queue"></div>
+      </div>
+    </section>
+
+    <section class="section-heading">
+      <div>
+        <h2>📊 ภาพรวมงาน</h2>
+        <p>กราฟจำนวน JOB ที่รับเข้ารายชั่วโมงและสัดส่วนใบเบิกเย็นแยกตามแผนก</p>
+      </div>
+    </section>
+
+    <section class="layout">
+      <div class="card">
+        <h3>🕓 JOB ที่รับเข้ารายชั่วโมง</h3>
+        <div id="hourly-chart"></div>
+      </div>
+      <div class="card">
+        <h3>🏭 ใบเบิกเย็นแยกตามแผนก/ไลน์</h3>
+        <div id="department-chart"></div>
+      </div>
+    </section>
+
+    <section class="section-heading">
+      <div>
+        <h2>📋 ทะเบียน JOB</h2>
+        <p>ค้นหา กรองสถานะ และเปิดหลักฐานสำหรับรายการที่ถูกยกเลิก</p>
+      </div>
+      <button class="btn soft" id="export-csv">⬇️ Export CSV</button>
+    </section>
+
+    <section class="card">
+      <div class="table-tools">
+        <select id="status-filter" aria-label="กรองตามสถานะ">
+          <option value="">ทุกสถานะ</option>
+          <option value="received">📥 รับ JOB / กำลังจัด</option>
+          <option value="completed">🔵 จัดเสร็จ / รอ PD</option>
+          <option value="handed_over">🟢 PD มารับแล้ว</option>
+          <option value="cancelled">🔴 ยกเลิก</option>
+        </select>
+        <select id="late-filter" aria-label="กรองใบเบิกเย็น">
+          <option value="">ใบเบิกทุกช่วงเวลา</option>
+          <option value="late">🔴 ใบเบิกเย็น</option>
+          <option value="ontime">🟢 ในเวลา Cut-off</option>
+        </select>
+        <input id="search" type="search" placeholder="ค้นหา JOB หรือแผนก/ไลน์">
+      </div>
+
+      <div id="empty-notice" class="empty" hidden>ยังไม่มีข้อมูลใบเบิก</div>
+      <div class="table-wrap" id="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>เลขที่ JOB</th>
+              <th>แผนก/ไลน์</th>
+              <th>📥 รับเรื่อง</th>
+              <th>🟡 เริ่มจัด</th>
+              <th>🔵 จัดเสร็จ</th>
+              <th>🟢 PD รับของ</th>
+              <th>❌ ยกเลิก</th>
+              <th>สถานะ</th>
+              <th>แท็ก</th>
+              <th>เวลาจัด</th>
+              <th>เวลารอ PD</th>
+              <th>หลักฐาน</th>
+            </tr>
+          </thead>
+          <tbody id="job-table-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <p class="footer-note">
+      ข้อมูลเก็บใน Local Storage ของเบราว์เซอร์เครื่องนี้ ไม่ได้ส่งไปเซิร์ฟเวอร์
+      • หากล้างข้อมูลเว็บไซต์/เบราว์เซอร์ ข้อมูลในเครื่องอาจถูกลบ ควร Export CSV สำรองเป็นระยะ
+      • การสแกนกล้องต้องอนุญาตสิทธิ์กล้อง และทำงานบน HTTPS หรือ localhost
+    </p>
+  </main>
+
+  <div class="modal-backdrop" id="evidence-modal" role="dialog" aria-modal="true" aria-labelledby="evidence-title">
+    <div class="modal" id="print-slip">
+      <h2 id="evidence-title">📄 หลักฐาน Timeline การยกเลิก JOB</h2>
+      <p class="modal-sub">บันทึกจากระบบ PK Warehouse · JOB Tracking</p>
+      <div id="evidence-content" class="evidence"></div>
+      <div class="modal-actions">
+        <button class="btn soft" id="evidence-close">ปิด</button>
+        <button class="btn" id="evidence-print">🖨️ พิมพ์ / บันทึก PDF</button>
+      </div>
     </div>
-    """,
-    unsafe_allow_html=True,
-)
+  </div>
 
-with st.sidebar:
-    st.header("⚙️ ตั้งค่าระบบ")
-    st.session_state.cutoff = st.time_input(
-        "Cut-off รับเอกสาร",
-        value=st.session_state.cutoff,
-        step=300,
-        help="ใบเบิกที่เข้าหลังเวลานี้จะถูกติดแท็กใบเบิกเย็น",
-    )
-    st.caption(f"เวลาตัดรอบปัจจุบัน: **{st.session_state.cutoff:%H:%M} น.**")
-    st.divider()
-    st.markdown("**สีสถานะ**")
-    st.markdown("🟡 กำลังจัด")
-    st.markdown("🔵 จัดเสร็จ รอ PD")
-    st.markdown("🟢 PD มารับแล้ว")
-    st.markdown("🔴 ยกเลิก / ใบเบิกเย็น")
+  <div class="modal-backdrop" id="cancel-modal" role="dialog" aria-modal="true" aria-labelledby="cancel-title">
+    <div class="modal">
+      <h2 id="cancel-title">🔴 ยืนยันยกเลิก JOB</h2>
+      <p class="modal-sub" id="cancel-job-label"></p>
+      <div class="warning">การยกเลิกจะบันทึกเวลา ผู้สั่ง และสาเหตุไว้ใน Timeline</div>
+      <div class="field">
+        <label for="cancel-by">ผู้สั่งยกเลิก PN/PD *</label>
+        <input id="cancel-by" type="text" placeholder="ชื่อผู้แจ้งหรือรหัส PN/PD">
+      </div>
+      <div class="field">
+        <label for="cancel-reason">สาเหตุการยกเลิก *</label>
+        <textarea id="cancel-reason" placeholder="ระบุสาเหตุหรือการเปลี่ยนแผน"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn soft" id="cancel-dismiss">กลับ</button>
+        <button class="btn red" id="cancel-confirm">บันทึกยกเลิก</button>
+      </div>
+      <div id="cancel-message" class="message" role="status"></div>
+    </div>
+  </div>
 
-data = load_data()
-has_data = not data.empty
+  <script>
+    "use strict";
 
-if has_data:
-    completed_data = data[data["completed_at"].notna()]
-    handed_over_data = data[data["waiting_minutes"].notna()]
-    cancelled_data = data[data["status"] == "cancelled"]
+    const STORAGE_KEY = "pk_warehouse_job_tracking_v1";
+    const CUTOFF_HOUR = 16;
+    const CUTOFF_MINUTE = 0;
 
-    late_percentage = data["late"].mean() * 100
-    average_processing = (
-        completed_data["processing_minutes"].mean()
-        if not completed_data.empty
-        else float("nan")
-    )
-    average_waiting = (
-        handed_over_data["waiting_minutes"].mean()
-        if not handed_over_data.empty
-        else float("nan")
-    )
-    wasted_labor = data["cancelled_labor_minutes"].fillna(0).sum()
-else:
-    completed_data = data.copy()
-    handed_over_data = data.copy()
-    cancelled_data = data.copy()
-    late_percentage = 0
-    average_processing = float("nan")
-    average_waiting = float("nan")
-    wasted_labor = 0
+    let jobs = loadJobs();
+    let pendingCancelId = null;
+    let cameraStream = null;
+    let scanLoopActive = false;
 
+    const $ = (selector) => document.querySelector(selector);
 
-# KPI cards
-kpis = st.columns(5)
-kpis[0].metric("📄 ยอดรวมใบเบิก", f"{len(data):,}")
-kpis[1].metric("🔴 ใบเบิกเย็น", f"{late_percentage:.1f}%")
-kpis[2].metric(
-    "⏱️ เวลาจัดเฉลี่ย",
-    f"{average_processing / 60:.1f} ชม."
-    if pd.notna(average_processing)
-    else "—",
-)
-kpis[3].metric(
-    "🕒 เวลารอรับเฉลี่ย",
-    f"{average_waiting:.0f} นาที"
-    if pd.notna(average_waiting)
-    else "—",
-)
-kpis[4].metric(
-    "❌ ยกเลิก / แรงงานสูญเปล่า",
-    f"{len(cancelled_data)} / {wasted_labor:.0f} นาที",
-)
+    function loadJobs() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (error) {
+        return [];
+      }
+    }
 
-st.subheader("📊 Bottleneck Dashboard")
+    function persist() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs));
+    }
 
-if not has_data:
-    st.warning("ยังไม่มีข้อมูลใบเบิก")
-else:
-    chart_column, department_column = st.columns([1.25, 1])
+    function localTimestamp(date = new Date()) {
+      const pad = (value) => String(value).padStart(2, "0");
+      return [
+        date.getFullYear(),
+        "-",
+        pad(date.getMonth() + 1),
+        "-",
+        pad(date.getDate()),
+        " ",
+        pad(date.getHours()),
+        ":",
+        pad(date.getMinutes()),
+        ":",
+        pad(date.getSeconds())
+      ].join("");
+    }
 
-    with chart_column:
-        hourly = (
-            data.assign(hour=data["received_at"].dt.hour)
-            .groupby("hour")
-            .size()
-            .reindex(range(7, 22), fill_value=0)
-            .rename("ใบเบิก")
-            .reset_index()
-        )
-        hourly.columns = ["ชั่วโมง", "ใบเบิก"]
-        hourly["ช่วง"] = hourly["ชั่วโมง"].apply(
-            lambda hour: "🔴 หลัง Cut-off"
-            if hour >= st.session_state.cutoff.hour
-            else "🟢 ก่อน Cut-off"
-        )
-
-        chart = px.bar(
-            hourly,
-            x="ชั่วโมง",
-            y="ใบเบิก",
-            color="ช่วง",
-            color_discrete_map={
-                "🟢 ก่อน Cut-off": "#319783",
-                "🔴 หลัง Cut-off": "#dc5962",
-            },
-            title="เวลาที่รับเอกสารรายชั่วโมง",
-            text="ใบเบิก",
-        )
-        chart.update_layout(
-            template="plotly_white",
-            height=350,
-            margin=dict(l=10, r=10, t=55, b=10),
-            legend_title_text="",
-            xaxis=dict(dtick=1, title="ชั่วโมงที่รับ"),
-            yaxis_title="จำนวนใบเบิก",
-            paper_bgcolor="rgba(255,255,255,0)",
-            plot_bgcolor="rgba(255,255,255,0)",
-        )
-        chart.update_traces(textposition="outside")
-        st.plotly_chart(chart, use_container_width=True)
-
-    with department_column:
-        summary = (
-            data.groupby("department")
-            .agg(total=("id", "count"), late_count=("late", "sum"))
-            .reset_index()
-        )
-        summary["late_percentage"] = (
-            summary["late_count"] / summary["total"] * 100
-        )
-        summary = summary.sort_values("late_percentage", ascending=True)
-
-        department_chart = px.bar(
-            summary,
-            x="late_percentage",
-            y="department",
-            orientation="h",
-            text=summary["late_percentage"].map(lambda value: f"{value:.0f}%"),
-            title="สัดส่วนใบเบิกเย็นแยกตามแผนก/ไลน์",
-            labels={
-                "late_percentage": "ใบเบิกเย็น (%)",
-                "department": "แผนก/ไลน์",
-            },
-            color="late_percentage",
-            color_continuous_scale=["#66b99d", "#f0bd58", "#d9535d"],
-        )
-        department_chart.update_layout(
-            template="plotly_white",
-            height=350,
-            margin=dict(l=10, r=10, t=55, b=10),
-            coloraxis_showscale=False,
-            paper_bgcolor="rgba(255,255,255,0)",
-            plot_bgcolor="rgba(255,255,255,0)",
-        )
-        department_chart.update_xaxes(range=[0, 100])
-        st.plotly_chart(department_chart, use_container_width=True)
-
-    st.info(
-        f"📌 มีใบเบิกหลัง Cut-off {st.session_state.cutoff:%H:%M} น. "
-        f"**{int(data['late'].sum())} รายการ ({late_percentage:.1f}%)** "
-        f"และมีเวลางานสูญเปล่าจากรายการยกเลิกรวม **{wasted_labor:.0f} นาที**"
-    )
-
-
-# ---------------------------------------------------------------------
-# New requisition form
-# ---------------------------------------------------------------------
-
-new_column, update_column = st.columns([1, 1.3])
-
-with new_column:
-    st.subheader("➕ รับใบเบิกใหม่")
-
-    with st.form("new_requisition", clear_on_submit=True):
-        requisition_no = st.text_input(
-            "เลขที่ใบเบิก *",
-            placeholder="ระบุเลขที่ใบเบิก",
-        )
-        department = st.text_input(
-            "แผนก / ไลน์ผลิต *",
-            placeholder="ระบุแผนกหรือไลน์",
-        )
-        requester = st.text_input("ชื่อผู้เบิก PN/PD *")
-        item_summary = st.text_area("รายการสินค้า *", height=75)
-
-        date_column, time_column = st.columns(2)
-        received_date = date_column.date_input("วันที่รับ", value=date.today())
-        received_time = time_column.time_input(
-            "เวลารับเอกสาร",
-            value=datetime.now().time().replace(second=0, microsecond=0),
-            step=300,
-        )
-
-        note = st.text_input("หมายเหตุ")
-        submit_new = st.form_submit_button(
-            "📥 รับใบเบิก",
-            use_container_width=True,
-            type="primary",
-        )
-
-        if submit_new:
-            required = [
-                requisition_no.strip(),
-                department.strip(),
-                requester.strip(),
-                item_summary.strip(),
-            ]
-
-            if not all(required):
-                st.error("กรุณากรอกข้อมูลที่มี * ให้ครบ")
-            else:
-                try:
-                    add_requisition(
-                        requisition_no,
-                        department,
-                        requester,
-                        item_summary,
-                        datetime.combine(received_date, received_time),
-                        note,
-                    )
-                    st.success("รับใบเบิกเรียบร้อยแล้ว")
-                    st.rerun()
-                except sqlite3.IntegrityError:
-                    st.error("เลขที่ใบเบิกนี้มีอยู่แล้ว")
-
-
-# ---------------------------------------------------------------------
-# Update status
-# ---------------------------------------------------------------------
-
-with update_column:
-    st.subheader("🔄 อัปเดตสถานะงาน")
-
-    open_data = data[
-        ~data["status"].isin(["handed_over", "cancelled"])
-    ]
-
-    if open_data.empty:
-        st.info(
-            "ยังไม่มีรายการสำหรับอัปเดตสถานะ"
-            if not has_data
-            else "ไม่มีรายการที่รออัปเดต"
-        )
-    else:
-        record_options = {
-            f"{row.requisition_no} · {row.department} · {row.status_label}": int(row.id)
-            for row in open_data.itertuples()
-        }
-        selected_label = st.selectbox("เลือกใบเบิก", list(record_options))
-        selected_row = data[
-            data["id"] == record_options[selected_label]
-        ].iloc[0]
-
-        # วางตัวเลือกสถานะนอก form เพื่อให้ฟอร์มยกเลิกแสดงทันทีเมื่อเลือก
-        new_status = st.selectbox(
-            "สถานะใหม่",
-            ["in_progress", "completed", "handed_over", "cancelled"],
-            format_func=lambda value: STATUS_LABELS[value],
-        )
-
-        with st.form("status_update"):
-            date_column, time_column = st.columns(2)
-            event_date = date_column.date_input(
-                "วันที่เกิดสถานะ",
-                value=date.today(),
-                key="event_date",
-            )
-            event_time = time_column.time_input(
-                "เวลาที่เกิดสถานะ",
-                value=datetime.now().time().replace(second=0, microsecond=0),
-                step=300,
-                key="event_time",
-            )
-
-            cancellation_by = ""
-            cancellation_reason = ""
-            wasted_minutes = 0.0
-
-            if new_status == "cancelled":
-                st.warning("การยกเลิกต้องระบุผู้สั่งยกเลิกและสาเหตุ")
-                cancellation_by = st.text_input(
-                    "ผู้สั่งยกเลิก PN/PD *",
-                    placeholder="ระบุ PN/PD หรือชื่อผู้แจ้ง",
-                )
-                cancellation_reason = st.text_area(
-                    "สาเหตุการยกเลิก *",
-                    placeholder="ระบุสาเหตุ",
-                    height=70,
-                )
-                wasted_minutes = st.number_input(
-                    "เวลางานคลังที่สูญเปล่า (นาที) *",
-                    min_value=0.0,
-                    step=5.0,
-                    value=0.0,
-                )
-
-            update_note = st.text_input(
-                "หมายเหตุเพิ่มเติม",
-                value=str(selected_row["note"] or ""),
-            )
-            submit_update = st.form_submit_button(
-                "บันทึกสถานะ",
-                use_container_width=True,
-                type="primary",
-            )
-
-            if submit_update:
-                event_at = datetime.combine(event_date, event_time)
-                received_at = selected_row["received_at"].to_pydatetime()
-
-                if event_at < received_at:
-                    st.error("เวลาสถานะต้องไม่ก่อนเวลารับเอกสาร")
-                elif (
-                    new_status == "handed_over"
-                    and pd.notna(selected_row["completed_at"])
-                    and event_at < selected_row["completed_at"].to_pydatetime()
-                ):
-                    st.error("เวลา PD มารับต้องไม่ก่อนเวลาจัดเสร็จ")
-                elif new_status == "cancelled" and (
-                    not cancellation_by.strip()
-                    or not cancellation_reason.strip()
-                    or wasted_minutes <= 0
-                ):
-                    st.error(
-                        "กรุณาระบุผู้สั่งยกเลิก สาเหตุ "
-                        "และเวลางานที่สูญเปล่าให้ครบ"
-                    )
-                else:
-                    update_status(
-                        int(selected_row["id"]),
-                        new_status,
-                        event_at,
-                        update_note,
-                        cancellation_by,
-                        cancellation_reason,
-                        wasted_minutes,
-                    )
-                    st.success("อัปเดตสถานะเรียบร้อยแล้ว")
-                    st.rerun()
-
-
-# ---------------------------------------------------------------------
-# Web Audio API tick sound
-# ---------------------------------------------------------------------
-
-st.components.v1.html(
-    """
-    <script>
-    (() => {
-      const parentWindow = window.parent;
-
-      if (parentWindow.__warehouseTickInstalled) return;
-      parentWindow.__warehouseTickInstalled = true;
-
-      parentWindow.playWarehouseTick = function () {
-        try {
-          const AudioContext =
-            parentWindow.AudioContext ||
-            parentWindow.webkitAudioContext;
-
-          if (!AudioContext) return;
-
-          const context = new AudioContext();
-          const oscillator = context.createOscillator();
-          const gain = context.createGain();
-          const now = context.currentTime;
-
-          oscillator.type = "sine";
-          oscillator.frequency.setValueAtTime(800, now);
-          oscillator.frequency.exponentialRampToValueAtTime(400, now + 0.04);
-
-          gain.gain.setValueAtTime(0.12, now);
-          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.04);
-
-          oscillator.connect(gain);
-          gain.connect(context.destination);
-          oscillator.start(now);
-          oscillator.stop(now + 0.04);
-          oscillator.onended = () => context.close();
-        } catch (error) {
-          // ถ้าเบราว์เซอร์ปิดเสียงไว้ แอปยังทำงานได้ตามปกติ
-        }
-      };
-
-      parentWindow.document.addEventListener(
-        "click",
-        (event) => {
-          const button = event.target.closest("button");
-          if (!button) return;
-
-          const label = (button.innerText || "").trim();
-          const isAction =
-            label.includes("รับใบเบิก") ||
-            label.includes("บันทึกสถานะ") ||
-            label.includes("Export");
-
-          if (isAction && parentWindow.playWarehouseTick) {
-            parentWindow.playWarehouseTick();
-          }
-        },
-        true
+    function parseTimestamp(value) {
+      if (!value) return null;
+      // Parse local "YYYY-MM-DD HH:MM:SS" without converting timezone.
+      const match = String(value).match(
+        /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/
       );
-    })();
-    </script>
-    """,
-    height=0,
-    width=0,
-)
+      if (!match) return null;
+      return new Date(
+        Number(match[1]), Number(match[2]) - 1, Number(match[3]),
+        Number(match[4]), Number(match[5]), Number(match[6])
+      );
+    }
 
+    function isLate(timestamp) {
+      const value = parseTimestamp(timestamp);
+      if (!value) return false;
+      return value.getHours() > CUTOFF_HOUR ||
+        (value.getHours() === CUTOFF_HOUR && value.getMinutes() > CUTOFF_MINUTE);
+    }
 
-# ---------------------------------------------------------------------
-# Filterable table and export
-# ---------------------------------------------------------------------
+    function elapsedMinutes(from, to) {
+      const start = parseTimestamp(from);
+      const end = parseTimestamp(to);
+      if (!start || !end) return null;
+      return Math.max(0, Math.round((end - start) / 60000));
+    }
 
-st.divider()
-st.subheader("📋 ทะเบียนใบเบิก")
+    function formatDuration(minutes) {
+      if (minutes === null || !Number.isFinite(minutes)) return "—";
+      if (minutes < 60) return `${minutes} นาที`;
+      const hours = Math.floor(minutes / 60);
+      const remainder = minutes % 60;
+      return remainder ? `${hours} ชม. ${remainder} นาที` : `${hours} ชม.`;
+    }
 
-filter1, filter2, filter3 = st.columns([1, 1, 1.4])
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+      })[character]);
+    }
 
-status_filter = filter1.multiselect(
-    "กรองสถานะ",
-    list(STATUS_LABELS),
-    format_func=lambda value: STATUS_LABELS[value],
-)
-tag_filter = filter2.selectbox(
-    "กรองใบเบิกเย็น",
-    ["ทั้งหมด", "🔴 ใบเบิกเย็น", "🟢 ในเวลาตัดรอบ"],
-)
-search = filter3.text_input(
-    "ค้นหาเลขที่ / แผนก / ผู้เบิก / รายการ",
-    placeholder="พิมพ์คำค้นหา",
-)
+    function playTick() {
+      try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) return;
 
-filtered = data.copy()
+        const context = new AudioContext();
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        const now = context.currentTime;
 
-if status_filter:
-    filtered = filtered[filtered["status"].isin(status_filter)]
+        oscillator.type = "sine";
+        oscillator.frequency.setValueAtTime(800, now);
+        oscillator.frequency.exponentialRampToValueAtTime(400, now + 0.04);
+        gain.gain.setValueAtTime(0.12, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.04);
 
-if tag_filter == "🔴 ใบเบิกเย็น":
-    filtered = filtered[filtered["late"]]
-elif tag_filter == "🟢 ในเวลาตัดรอบ":
-    filtered = filtered[~filtered["late"]]
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start(now);
+        oscillator.stop(now + 0.04);
+        oscillator.onended = () => context.close();
+      } catch (error) {
+        // เสียงเป็นส่วนเสริม ไม่ขัดขวางการบันทึกข้อมูล
+      }
+    }
 
-if search.strip():
-    search_columns = [
-        "requisition_no",
-        "department",
-        "requester",
-        "item_summary",
-        "cancellation_by",
-        "cancellation_reason",
-    ]
-    search_mask = (
-        filtered[search_columns]
-        .fillna("")
-        .astype(str)
-        .apply(
-            lambda column: column.str.contains(
-                search.strip(),
-                case=False,
-                regex=False,
-            )
-        )
-        .any(axis=1)
-    )
-    filtered = filtered[search_mask]
+    function showMessage(element, text, type = "success") {
+      element.textContent = text;
+      element.className = `message show ${type}`;
+      window.setTimeout(() => element.classList.remove("show"), 4200);
+    }
 
-display_columns = [
-    "requisition_no",
-    "department",
-    "requester",
-    "item_summary",
-    "received_at",
-    "in_progress_at",
-    "completed_at",
-    "handed_over_at",
-    "cancelled_at",
-    "status_label",
-    "tag",
-    "processing_minutes",
-    "waiting_minutes",
-    "cancellation_by",
-    "cancellation_reason",
-    "cancelled_labor_minutes",
-    "note",
-]
+    function makeJobNumber(raw) {
+      const value = raw.trim();
+      if (!value) return "";
+      if (/^JOB-/i.test(value)) return value.toUpperCase();
+      if (/^\d{4}$/.test(value)) return `JOB-${value}`;
+      return value.toUpperCase();
+    }
 
-table = filtered[display_columns].copy()
-table.columns = [
-    "เลขที่ใบเบิก",
-    "แผนก/ไลน์",
-    "ผู้เบิก",
-    "รายการ",
-    "📥 รับเอกสาร",
-    "🟡 เริ่มจัด",
-    "🔵 จัดเสร็จ",
-    "🟢 PD รับของ",
-    "❌ ยกเลิกเมื่อ",
-    "สถานะ",
-    "แท็ก",
-    "เวลาจัด (นาที)",
-    "เวลารอ PD (นาที)",
-    "ผู้สั่งยกเลิก",
-    "สาเหตุยกเลิก",
-    "แรงงานสูญเปล่า (นาที)",
-    "หมายเหตุ",
-]
+    function createJob(jobNumber, department) {
+      const now = localTimestamp();
+      const job = {
+        id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+        jobNumber: makeJobNumber(jobNumber),
+        department: department.trim(),
+        receivedTime: now,
+        inProgressTime: null,
+        pickedTime: null,
+        handoverTime: null,
+        canceledTime: null,
+        canceledBy: "",
+        cancelReason: "",
+        status: "received"
+      };
+      jobs.unshift(job);
+      return job;
+    }
 
-for column in [
-    "📥 รับเอกสาร",
-    "🟡 เริ่มจัด",
-    "🔵 จัดเสร็จ",
-    "🟢 PD รับของ",
-    "❌ ยกเลิกเมื่อ",
-]:
-    table[column] = (
-        pd.to_datetime(table[column], errors="coerce")
-        .dt.strftime("%d/%m/%Y %H:%M")
-        .fillna("—")
-    )
+    function addJobsFromBulk() {
+      const text = $("#bulk-input").value.trim();
+      const defaultDepartment = $("#department").value.trim();
+      const message = $("#input-message");
 
-for column in [
-    "เวลาจัด (นาที)",
-    "เวลารอ PD (นาที)",
-    "แรงงานสูญเปล่า (นาที)",
-]:
-    table[column] = table[column].round(0).astype("Int64")
+      if (!text) {
+        showMessage(message, "กรุณาวางเลข JOB อย่างน้อยหนึ่งรายการ", "error");
+        return;
+      }
 
-if not has_data:
-    st.warning("ยังไม่มีข้อมูลใบเบิก")
+      const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      const entries = [];
+      const invalid = [];
 
-st.caption(f"แสดง {len(table):,} จาก {len(data):,} รายการ")
-st.dataframe(
-    table,
-    use_container_width=True,
-    hide_index=True,
-    height=440,
-)
+      for (const line of lines) {
+        const parts = line.split(/[,\t;|]/).map((part) => part.trim()).filter(Boolean);
+        const number = makeJobNumber(parts[0] || "");
+        const department = parts[1] || defaultDepartment;
 
-csv_data = table.to_csv(index=False).encode("utf-8-sig")
+        if (!number || !department) {
+          invalid.push(line);
+          continue;
+        }
 
-st.download_button(
-    "📥 Export Data to CSV",
-    data=csv_data,
-    file_name=f"warehouse_tracking_{date.today():%Y%m%d}.csv",
-    mime="text/csv",
-    use_container_width=True,
-)
+        entries.push({ number, department });
+      }
 
-try:
-    excel_buffer = BytesIO()
-    with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
-        table.to_excel(
-            writer,
-            index=False,
-            sheet_name="Warehouse Tracking",
-        )
-    excel_buffer.seek(0)
+      if (invalid.length) {
+        showMessage(
+          message,
+          `กรอกแผนก/ไลน์ด้านบน หรือระบุแผนกหลังเลข JOB ในบรรทัดเดียวกัน: ${invalid.join(", ")}`,
+          "error"
+        );
+        return;
+      }
 
-    st.download_button(
-        "📊 Export Data to Excel",
-        data=excel_buffer,
-        file_name=f"warehouse_tracking_{date.today():%Y%m%d}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
-except ImportError:
-    st.caption("ติดตั้ง openpyxl เพื่อเปิดใช้ Export Excel: pip install openpyxl")
+      const seen = new Set(jobs.map((job) => job.jobNumber.toLowerCase()));
+      const duplicates = entries.filter((entry) => seen.has(entry.number.toLowerCase()));
+      if (duplicates.length) {
+        showMessage(
+          message,
+          `พบ JOB ที่มีในระบบแล้ว: ${duplicates.map((item) => item.number).join(", ")}`,
+          "error"
+        );
+        return;
+      }
 
-st.caption(
-    "Processing Lead Time = รับเอกสารถึงจัดเสร็จ • "
-    "Waiting Time = จัดเสร็จถึง PD มารับ • "
-    "Wasted Labor Time = เวลาที่คลังทำงานไปก่อนใบเบิกถูกยกเลิก"
-)
+      const receivedAt = localTimestamp();
+      entries.forEach((entry) => {
+        jobs.unshift({
+          id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+          jobNumber: entry.number,
+          department: entry.department,
+          receivedTime: receivedAt,
+          inProgressTime: null,
+          pickedTime: null,
+          handoverTime: null,
+          canceledTime: null,
+          canceledBy: "",
+          cancelReason: "",
+          status: "received"
+        });
+      });
+
+      persist();
+      playTick();
+      $("#bulk-input").value = "";
+      showMessage(message, `บันทึกรับเรื่องแล้ว ${entries.length} JOB`);
+      render();
+    }
+
+    function addQuickJob() {
+      const input = $("#quick-job");
+      const message = $("#input-message");
+      const number = makeJobNumber(input.value);
+      const department = $("#department").value.trim();
+
+      if (!number) {
+        showMessage(message, "กรุณากรอกเลข JOB", "error");
+        input.focus();
+        return;
+      }
+
+      if (!department) {
+        showMessage(message, "กรุณากรอกแผนก/ไลน์ผลิตก่อนรับ JOB", "error");
+        $("#department").focus();
+        return;
+      }
+
+      if (jobs.some((job) => job.jobNumber.toLowerCase() === number.toLowerCase())) {
+        showMessage(message, `เลข ${number} มีในระบบแล้ว`, "error");
+        input.select();
+        return;
+      }
+
+      createJob(number, department);
+      persist();
+      playTick();
+      input.value = "";
+      showMessage(message, `รับ ${number} แล้ว`);
+      render();
+      input.focus();
+    }
+
+    function setStatus(id, status) {
+      const job = jobs.find((item) => item.id === id);
+      if (!job) return;
+
+      const now = localTimestamp();
+
+      if (status === "in_progress") {
+        job.inProgressTime = job.inProgressTime || now;
+        job.status = "in_progress";
+      } else if (status === "completed") {
+        job.inProgressTime = job.inProgressTime || now;
+        job.pickedTime = now;
+        job.status = "completed";
+      } else if (status === "handed_over") {
+        if (!job.pickedTime) {
+          job.pickedTime = now;
+        }
+        job.handoverTime = now;
+        job.status = "handed_over";
+      }
+
+      persist();
+      playTick();
+      render();
+    }
+
+    function openCancelModal(id) {
+      const job = jobs.find((item) => item.id === id);
+      if (!job) return;
+
+      pendingCancelId = id;
+      $("#cancel-job-label").textContent = `${job.jobNumber} · ${job.department}`;
+      $("#cancel-by").value = "";
+      $("#cancel-reason").value = "";
+      $("#cancel-message").className = "message";
+      $("#cancel-modal").classList.add("open");
+      $("#cancel-by").focus();
+    }
+
+    function closeCancelModal() {
+      $("#cancel-modal").classList.remove("open");
+      pendingCancelId = null;
+    }
+
+    function confirmCancel() {
+      const job = jobs.find((item) => item.id === pendingCancelId);
+      const canceledBy = $("#cancel-by").value.trim();
+      const reason = $("#cancel-reason").value.trim();
+
+      if (!job) return;
+      if (!canceledBy || !reason) {
+        showMessage($("#cancel-message"), "กรุณาระบุผู้สั่งยกเลิกและสาเหตุให้ครบ", "error");
+        return;
+      }
+
+      job.canceledTime = localTimestamp();
+      job.canceledBy = canceledBy;
+      job.cancelReason = reason;
+      job.status = "cancelled";
+
+      persist();
+      playTick();
+      closeCancelModal();
+      render();
+    }
+
+    function statusLabel(status) {
+      const labels = {
+        received: "🟡 รับ JOB / กำลังจัด",
+        in_progress: "🟡 กำลังจัด",
+        completed: "🔵 จัดเสร็จ / รอ PD",
+        handed_over: "🟢 PD มารับแล้ว",
+        cancelled: "🔴 ยกเลิก"
+      };
+      return labels[status] || "—";
+    }
+
+    function shortTime(value) {
+      if (!value) return "—";
+      return escapeHtml(value);
+    }
+
+    function renderQueue() {
+      const container = $("#active-queue");
+      const active = jobs.filter((job) => !["handed_over", "cancelled"].includes(job.status));
+
+      if (!active.length) {
+        container.innerHTML = `<div class="empty">ยังไม่มีงานในคิวที่ต้องดำเนินการ</div>`;
+        return;
+      }
+
+      container.innerHTML = active.map((job) => `
+        <article class="job-card">
+          <div class="job-top">
+            <div>
+              <div class="job-number">${escapeHtml(job.jobNumber)}</div>
+              <div class="job-dept">${escapeHtml(job.department)}</div>
+            </div>
+            <span class="badge ${escapeHtml(job.status)}">${statusLabel(job.status)}</span>
+          </div>
+          ${isLate(job.receivedTime) ? `<div class="late-tag">🔴 ใบเบิกเย็น/ส่งช้า · รับหลัง 16:00 น.</div>` : ""}
+          <div class="timeline">
+            <div class="time-cell"><span>📥 รับเรื่อง</span><strong>${shortTime(job.receivedTime)}</strong></div>
+            <div class="time-cell"><span>🟡 เริ่มจัด</span><strong>${shortTime(job.inProgressTime)}</strong></div>
+            <div class="time-cell"><span>🔵 จัดเสร็จ</span><strong>${shortTime(job.pickedTime)}</strong></div>
+            <div class="time-cell"><span>🟢 PD รับของ</span><strong>${shortTime(job.handoverTime)}</strong></div>
+          </div>
+          <div class="job-actions">
+            ${job.status === "received" ? `<button class="btn amber small" data-action="start" data-id="${escapeHtml(job.id)}">🟡 เริ่มจัด</button>` : ""}
+            ${["received", "in_progress"].includes(job.status) ? `<button class="btn blue small" data-action="picked" data-id="${escapeHtml(job.id)}">🔵 จัดเสร็จ / รอ PD</button>` : ""}
+            ${job.status === "completed" ? `<button class="btn green small" data-action="handover" data-id="${escapeHtml(job.id)}">🟢 PD มารับแล้ว</button>` : ""}
+            <button class="btn red small" data-action="cancel" data-id="${escapeHtml(job.id)}">🔴 ยกเลิก JOB</button>
+          </div>
+        </article>
+      `).join("");
+    }
+
+    function renderKpis() {
+      const total = jobs.length;
+      const lateJobs = jobs.filter((job) => isLate(job.receivedTime));
+      const pickedJobs = jobs.filter((job) => job.pickedTime);
+      const handedJobs = jobs.filter((job) => job.handoverTime && job.pickedTime);
+      const canceledJobs = jobs.filter((job) => job.status === "cancelled");
+
+      const processing = pickedJobs
+        .map((job) => elapsedMinutes(job.receivedTime, job.pickedTime))
+        .filter((value) => value !== null);
+
+      const waiting = handedJobs
+        .map((job) => elapsedMinutes(job.pickedTime, job.handoverTime))
+        .filter((value) => value !== null);
+
+      const wasted = canceledJobs.reduce((totalMinutes, job) => {
+        const start = job.inProgressTime || job.receivedTime;
+        return totalMinutes + (elapsedMinutes(start, job.canceledTime) || 0);
+      }, 0);
+
+      const avg = (values) => values.length
+        ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length)
+        : null;
+
+      $("#kpi-total").textContent = total.toLocaleString("th-TH");
+      $("#kpi-late").textContent = total ? `${Math.round((lateJobs.length / total) * 100)}%` : "0%";
+      $("#kpi-pick").textContent = avg(processing) === null ? "—" : formatDuration(avg(processing));
+      $("#kpi-wait").textContent = avg(waiting) === null ? "—" : formatDuration(avg(waiting));
+      $("#kpi-cancel").textContent = `${canceledJobs.length} / ${wasted} นาที`;
+    }
+
+    function renderHourlyChart() {
+      const container = $("#hourly-chart");
+
+      if (!jobs.length) {
+        container.innerHTML = `<div class="empty">ยังไม่มีข้อมูลใบเบิก</div>`;
+        return;
+      }
+
+      const startHour = 7;
+      const endHour = 22;
+      const counts = Array.from({ length: endHour - startHour }, (_, index) => ({
+        hour: startHour + index,
+        count: 0
+      }));
+
+      for (const job of jobs) {
+        const timestamp = parseTimestamp(job.receivedTime);
+        if (!timestamp) continue;
+        const slot = counts.find((item) => item.hour === timestamp.getHours());
+        if (slot) slot.count += 1;
+      }
+
+      const max = Math.max(1, ...counts.map((item) => item.count));
+      const width = 720;
+      const height = 210;
+      const padLeft = 34;
+      const padBottom = 33;
+      const chartHeight = height - padBottom - 15;
+      const barGap = 7;
+      const barWidth = (width - padLeft - 12) / counts.length - barGap;
+
+      const bars = counts.map((item, index) => {
+        const x = padLeft + index * (barWidth + barGap);
+        const barHeight = (item.count / max) * chartHeight;
+        const y = chartHeight - barHeight + 12;
+        const late = item.hour >= 16;
+        return `
+          <g>
+            <rect x="${x}" y="${y}" width="${barWidth}" height="${Math.max(barHeight, 1)}"
+              rx="5" fill="${late ? "#db5b63" : "#319783"}" opacity=".9">
+              <title>${String(item.hour).padStart(2, "0")}:00 · ${item.count} JOB</title>
+            </rect>
+            <text x="${x + barWidth / 2}" y="${height - 9}" text-anchor="middle"
+              font-size="9" fill="#778497">${String(item.hour).padStart(2, "0")}</text>
+            ${item.count ? `<text x="${x + barWidth / 2}" y="${Math.max(y - 4, 11)}" text-anchor="middle" font-size="9" fill="#526176">${item.count}</text>` : ""}
+          </g>`;
+      }).join("");
+
+      container.innerHTML = `
+        <div style="overflow:auto">
+          <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="กราฟจำนวน JOB ที่รับรายชั่วโมง" style="width:100%;min-width:480px;height:auto">
+            <line x1="${padLeft}" y1="${chartHeight + 12}" x2="${width - 8}" y2="${chartHeight + 12}" stroke="#dfe6ed"/>
+            ${bars}
+          </svg>
+        </div>
+        <div style="display:flex;gap:14px;color:#778497;font-size:10px">
+          <span><b style="color:#319783">●</b> ก่อน Cut-off</span>
+          <span><b style="color:#db5b63">●</b> ตั้งแต่ 16:00 น. เป็นต้นไป</span>
+        </div>`;
+    }
+
+    function renderDepartmentChart() {
+      const container = $("#department-chart");
+
+      if (!jobs.length) {
+        container.innerHTML = `<div class="empty">ยังไม่มีข้อมูลใบเบิก</div>`;
+        return;
+      }
+
+      const departments = new Map();
+      for (const job of jobs) {
+        const name = job.department || "ไม่ระบุแผนก";
+        if (!departments.has(name)) departments.set(name, { total: 0, late: 0 });
+        const item = departments.get(name);
+        item.total += 1;
+        if (isLate(job.receivedTime)) item.late += 1;
+      }
+
+      const rows = [...departments.entries()]
+        .map(([name, values]) => ({
+          name,
+          total: values.total,
+          percentage: values.total ? Math.round((values.late / values.total) * 100) : 0
+        }))
+        .sort((a, b) => b.percentage - a.percentage);
+
+      container.innerHTML = rows.map((row) => `
+        <div style="margin:13px 0">
+          <div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:5px;font-size:11px">
+            <strong>${escapeHtml(row.name)}</strong>
+            <span style="color:#748195">${row.percentage}% · ${row.total} JOB</span>
+          </div>
+          <div style="height:10px;border-radius:99px;background:#edf1f5;overflow:hidden">
+            <div style="height:100%;width:${row.percentage}%;border-radius:99px;background:linear-gradient(90deg,#eeb954,#d9535d)"></div>
+          </div>
+        </div>
+      `).join("");
+    }
+
+    function renderTable() {
+      const body = $("#job-table-body");
+      const statusFilter = $("#status-filter").value;
+      const lateFilter = $("#late-filter").value;
+      const query = $("#search").value.trim().toLowerCase();
+
+      let filtered = jobs.filter((job) => {
+        if (statusFilter && job.status !== statusFilter) return false;
+        if (lateFilter === "late" && !isLate(job.receivedTime)) return false;
+        if (lateFilter === "ontime" && isLate(job.receivedTime)) return false;
+        if (query && !`${job.jobNumber} ${job.department}`.toLowerCase().includes(query)) return false;
+        return true;
+      });
+
+      $("#empty-notice").hidden = jobs.length !== 0;
+      $("#table-wrap").hidden = jobs.length === 0;
+
+      if (!jobs.length) {
+        body.innerHTML = "";
+        return;
+      }
+
+      if (!filtered.length) {
+        body.innerHTML = `<tr><td colspan="12" class="muted">ไม่พบรายการที่ตรงกับตัวกรอง</td></tr>`;
+        return;
+      }
+
+      body.innerHTML = filtered.map((job) => {
+        const processing = job.pickedTime
+          ? formatDuration(elapsedMinutes(job.receivedTime, job.pickedTime))
+          : "—";
+        const waiting = job.handoverTime && job.pickedTime
+          ? formatDuration(elapsedMinutes(job.pickedTime, job.handoverTime))
+          : "—";
+
+        return `
+          <tr>
+            <td><strong>${escapeHtml(job.jobNumber)}</strong></td>
+            <td>${escapeHtml(job.department)}</td>
+            <td>${shortTime(job.receivedTime)}</td>
+            <td>${shortTime(job.inProgressTime)}</td>
+            <td>${shortTime(job.pickedTime)}</td>
+            <td>${shortTime(job.handoverTime)}</td>
+            <td>${shortTime(job.canceledTime)}</td>
+            <td><span class="badge ${escapeHtml(job.status)}">${statusLabel(job.status)}</span></td>
+            <td>${isLate(job.receivedTime) ? `<span class="late-tag">🔴 ใบเบิกเย็น</span>` : `<span style="color:#19845f">🟢 ปกติ</span>`}</td>
+            <td>${processing}</td>
+            <td>${waiting}</td>
+            <td>${job.status === "cancelled" ? `<button class="btn soft small" data-action="evidence" data-id="${escapeHtml(job.id)}">📄 ดูหลักฐาน</button>` : "—"}</td>
+          </tr>`;
+      }).join("");
+    }
+
+    function render() {
+      $("#cutoff-chip").textContent = "16:00";
+      renderKpis();
+      renderQueue();
+      renderHourlyChart();
+      renderDepartmentChart();
+      renderTable();
+    }
+
+    function openEvidence(id) {
+      const job = jobs.find((item) => item.id === id);
+      if (!job) return;
+
+      const startWork = job.inProgressTime || job.receivedTime;
+      const wasted = job.canceledTime
+        ? elapsedMinutes(startWork, job.canceledTime)
+        : null;
+
+      const fields = [
+        ["เลขที่ JOB", job.jobNumber],
+        ["แผนก / ไลน์ผลิต", job.department],
+        ["เวลารับใบเบิก", job.receivedTime || "—"],
+        ["เวลาเริ่มจัด", job.inProgressTime || "ไม่มีการบันทึก"],
+        ["เวลาจัดเสร็จ", job.pickedTime || "ยังจัดไม่เสร็จ"],
+        ["เวลายกเลิก", job.canceledTime || "—"],
+        ["เวลางานที่เสียไป", wasted === null ? "—" : `${wasted} นาที (${formatDuration(wasted)})`],
+        ["ผู้สั่งยกเลิก PN/PD", job.canceledBy || "—"],
+        ["สาเหตุการยกเลิก", job.cancelReason || "—"]
+      ];
+
+      $("#evidence-content").innerHTML = fields.map(([label, value]) => `
+        <div class="evidence-row">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </div>
+      `).join("");
+
+      $("#evidence-modal").classList.add("open");
+    }
+
+    function exportCsv() {
+      if (!jobs.length) {
+        window.alert("ยังไม่มีข้อมูลใบเบิกสำหรับ Export");
+        return;
+      }
+
+      const headers = [
+        "JOB", "Department", "Status",
+        "Received Time", "In Progress Time", "Picked Time",
+        "Handover Time", "Canceled Time", "Late Requisition",
+        "Cancellation By", "Cancellation Reason", "Wasted Labor Minutes"
+      ];
+
+      const rows = jobs.map((job) => {
+        const wasted = job.canceledTime
+          ? elapsedMinutes(job.inProgressTime || job.receivedTime, job.canceledTime)
+          : "";
+        return [
+          job.jobNumber,
+          job.department,
+          statusLabel(job.status),
+          job.receivedTime || "",
+          job.inProgressTime || "",
+          job.pickedTime || "",
+          job.handoverTime || "",
+          job.canceledTime || "",
+          isLate(job.receivedTime) ? "Yes" : "No",
+          job.canceledBy || "",
+          job.cancelReason || "",
+          wasted
+        ];
+      });
+
+      const csv = [headers, ...rows]
+        .map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(","))
+        .join("\r\n");
+
+      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `warehouse_jobs_${localTimestamp().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      playTick();
+    }
+
+    async function startCamera() {
+      const note = $("#scanner-note");
+      const video = $("#scanner-video");
+      const scannerBox = $("#scanner-box");
+
+      if (!("BarcodeDetector" in window)) {
+        note.textContent = "เบราว์เซอร์นี้ยังไม่รองรับ BarcodeDetector กรุณาใช้ช่องพิมพ์ด่วนแทน";
+        scannerBox.classList.add("open");
+        return;
+      }
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        note.textContent = "ไม่สามารถเปิดกล้องได้ กรุณาใช้ HTTPS หรือ localhost และอนุญาตสิทธิ์กล้อง";
+        scannerBox.classList.add("open");
+        return;
+      }
+
+      try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false
+        });
+        video.srcObject = cameraStream;
+        await video.play();
+        scannerBox.classList.add("open");
+        $("#camera-start").hidden = true;
+        $("#camera-stop").hidden = false;
+
+        const detector = new BarcodeDetector({
+          formats: ["qr_code", "code_128", "code_39", "ean_13", "ean_8", "upc_a"]
+        });
+        scanLoopActive = true;
+        note.textContent = "กำลังสแกน…";
+
+        const scan = async () => {
+          if (!scanLoopActive || !cameraStream) return;
+
+          try {
+            const results = await detector.detect(video);
+            if (results.length) {
+              const raw = results[0].rawValue || "";
+              const jobMatch = raw.match(/JOB-\d+/i) || raw.match(/\b\d{4}\b/);
+              if (jobMatch) {
+                $("#quick-job").value = jobMatch[0];
+                stopCamera();
+                addQuickJob();
+                return;
+              }
+            }
+          } catch (error) {
+            note.textContent = "อ่านบาร์โค้ดไม่สำเร็จ ลองปรับระยะกล้อง";
+          }
+          window.requestAnimationFrame(scan);
+        };
+
+        window.requestAnimationFrame(scan);
+      } catch (error) {
+        note.textContent = "เปิดกล้องไม่ได้ กรุณาตรวจสอบสิทธิ์กล้องของเบราว์เซอร์";
+        scannerBox.classList.add("open");
+      }
+    }
+
+    function stopCamera() {
+      scanLoopActive = false;
+      if (cameraStream) {
+        cameraStream.getTracks().forEach((track) => track.stop());
+        cameraStream = null;
+      }
+      $("#scanner-video").srcObject = null;
+      $("#camera-start").hidden = false;
+      $("#camera-stop").hidden = true;
+      $("#scanner-note").textContent = "หันกล้องไปที่บาร์โค้ดหรือ QR Code ของ JOB";
+    }
+
+    $("#bulk-submit").addEventListener("click", addJobsFromBulk);
+    $("#quick-submit").addEventListener("click", addQuickJob);
+    $("#quick-job").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        addQuickJob();
+      }
+    });
+
+    $("#active-queue").addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-action]");
+      if (!button) return;
+
+      const { action, id } = button.dataset;
+      if (action === "start") setStatus(id, "in_progress");
+      if (action === "picked") setStatus(id, "completed");
+      if (action === "handover") setStatus(id, "handed_over");
+      if (action === "cancel") openCancelModal(id);
+    });
+
+    $("#job-table-body").addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-action='evidence']");
+      if (button) openEvidence(button.dataset.id);
+    });
+
+    $("#cancel-confirm").addEventListener("click", confirmCancel);
+    $("#cancel-dismiss").addEventListener("click", closeCancelModal);
+    $("#evidence-close").addEventListener("click", () => $("#evidence-modal").classList.remove("open"));
+    $("#evidence-print").addEventListener("click", () => window.print());
+    $("#export-csv").addEventListener("click", exportCsv);
+    $("#camera-start").addEventListener("click", startCamera);
+    $("#camera-stop").addEventListener("click", stopCamera);
+
+    ["status-filter", "late-filter"].forEach((id) => {
+      $(`#${id}`).addEventListener("change", renderTable);
+    });
+    $("#search").addEventListener("input", renderTable);
+
+    $("#evidence-modal").addEventListener("click", (event) => {
+      if (event.target.id === "evidence-modal") {
+        $("#evidence-modal").classList.remove("open");
+      }
+    });
+    $("#cancel-modal").addEventListener("click", (event) => {
+      if (event.target.id === "cancel-modal") closeCancelModal();
+    });
+
+    render();
+    $("#department").focus();
+  </script>
+</body>
+</html>
