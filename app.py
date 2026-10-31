@@ -1,11 +1,12 @@
 """PK Warehouse JOB Tracking
 รันด้วย: streamlit run app.py
 
-ติดตั้งแพ็กเกจ:
-    pip install streamlit pandas plotly
+ติดตั้ง dependencies:
+    pip install streamlit pandas plotly openpyxl
 """
 
 from datetime import date, datetime, time
+from io import BytesIO
 from pathlib import Path
 import os
 import sqlite3
@@ -21,7 +22,7 @@ DB_PATH = Path(
         str(Path(__file__).resolve().with_name("warehouse_tracking.db")),
     )
 )
-CUTOFF_DEFAULT = time(16, 0)
+DEFAULT_CUTOFF = time(16, 0)
 
 STATUS_LABELS = {
     "received": "🟡 รับ JOB / กำลังจัด",
@@ -31,18 +32,7 @@ STATUS_LABELS = {
     "cancelled": "🔴 ยกเลิก",
 }
 
-STATUS_COLORS = {
-    "received": "#d59620",
-    "in_progress": "#d59620",
-    "completed": "#3474c4",
-    "handed_over": "#19845f",
-    "cancelled": "#c2414d",
-}
-
-# รายการตัวอย่างจากเวอร์ชันก่อน ลบออกจากฐานข้อมูลเดิมเพียงครั้งเดียว
-# หลังจากนั้นข้อมูล JOB จริงที่เพิ่มใหม่จะไม่ถูกลบ
 LEGACY_SAMPLE_NUMBERS = [f"WR-260{i:02d}" for i in range(1, 14)]
-LEGACY_CLEANUP_KEY = "legacy_mock_rows_removed_v1"
 
 
 # ---------------------------------------------------------------------
@@ -85,12 +75,14 @@ def initialize_database():
             """
         )
 
-        cleanup_done = connection.execute(
+        # ล้างเฉพาะรายการตัวอย่างจากเวอร์ชันก่อนเพียงครั้งเดียว
+        cleanup_key = "legacy_mock_rows_removed_v1"
+        cleaned = connection.execute(
             "SELECT value FROM app_metadata WHERE key = ?",
-            (LEGACY_CLEANUP_KEY,),
+            (cleanup_key,),
         ).fetchone()
 
-        if cleanup_done is None:
+        if cleaned is None:
             placeholders = ",".join("?" for _ in LEGACY_SAMPLE_NUMBERS)
             connection.execute(
                 f"DELETE FROM jobs WHERE job_number IN ({placeholders})",
@@ -98,7 +90,7 @@ def initialize_database():
             )
             connection.execute(
                 "INSERT INTO app_metadata (key, value) VALUES (?, ?)",
-                (LEGACY_CLEANUP_KEY, "done"),
+                (cleanup_key, "done"),
             )
 
 
@@ -110,23 +102,37 @@ def load_jobs():
         )
 
 
-def add_job(job_number, department, received_time):
+def add_jobs_bulk(entries, received_time):
+    """บันทึกหลาย JOB ใน transaction เดียว ถ้ารายการใดผิดพลาดจะ rollback ทั้งชุด"""
     now = datetime.now().isoformat(sep=" ", timespec="seconds")
 
     with get_connection() as connection:
-        connection.execute(
+        connection.executemany(
             """
             INSERT INTO jobs (
-                job_number, department, received_time, status,
-                created_at, updated_at
+                job_number,
+                department,
+                received_time,
+                status,
+                created_at,
+                updated_at
             )
             VALUES (?, ?, ?, 'received', ?, ?)
             """,
-            (job_number, department, received_time, now, now),
+            [
+                (job_number, department, received_time, now, now)
+                for job_number, department in entries
+            ],
         )
 
 
-def update_job(job_id, status, timestamp, canceled_by="", cancel_reason=""):
+def update_job(
+    job_id,
+    status,
+    timestamp,
+    canceled_by="",
+    cancel_reason="",
+):
     timestamp_column = {
         "in_progress": "in_progress_time",
         "completed": "picked_time",
@@ -169,9 +175,10 @@ def now_string():
 def parse_datetime(value):
     if not value:
         return None
+
     try:
         return datetime.fromisoformat(str(value))
-    except ValueError:
+    except (TypeError, ValueError):
         return None
 
 
@@ -190,9 +197,17 @@ def duration_minutes(start, end):
     return max(0, round((end_dt - start_dt).total_seconds() / 60))
 
 
+def safe_average(values):
+    """คืนค่าเฉลี่ยจำนวนเต็ม หรือ 0 เมื่อยังไม่มีข้อมูล"""
+    if values:
+        return round(sum(values) / len(values))
+    return 0
+
+
 def duration_label(minutes):
     if minutes is None:
         return "—"
+
     if minutes < 60:
         return f"{minutes} นาที"
 
@@ -203,18 +218,15 @@ def duration_label(minutes):
 
 
 def format_timestamp(value):
-    if not value:
-        return "—"
-
     parsed = parse_datetime(value)
     if parsed is None:
-        return str(value)
-
+        return "—"
     return parsed.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def normalize_job_number(value):
     value = value.strip()
+
     if not value:
         return ""
 
@@ -227,8 +239,7 @@ def normalize_job_number(value):
     return value.upper()
 
 
-def tick_sound():
-    """เล่นเสียงติ๊กสั้น ๆ ผ่าน Web Audio API โดยไม่ใช้ไฟล์เสียง"""
+def play_tick():
     st.components.v1.html(
         """
         <script>
@@ -255,7 +266,7 @@ def tick_sound():
             oscillator.stop(now + 0.04);
             oscillator.onended = () => context.close();
           } catch (error) {
-            // ปิดเสียงหรือไม่รองรับ Web Audio ก็ยังใช้แอปได้ตามปกติ
+            // หากเบราว์เซอร์ปิดเสียงไว้ แอปยังทำงานได้ตามปกติ
           }
         })();
         </script>
@@ -275,12 +286,11 @@ st.set_page_config(
 )
 
 if "cutoff" not in st.session_state:
-    st.session_state.cutoff = CUTOFF_DEFAULT
+    st.session_state.cutoff = DEFAULT_CUTOFF
 
 initialize_database()
 
-# CSS ต้องอยู่ภายใน string ที่ส่งให้ st.markdown
-# ห้ามวางบรรทัด CSS เช่น --shadow: ... ไว้ตรง ๆ ในไฟล์ Python
+# CSS ทั้งหมดอยู่ใน string ของ st.markdown เพื่อป้องกัน SyntaxError
 st.markdown(
     """
     <style>
@@ -289,10 +299,6 @@ st.markdown(
         --muted: #748195;
         --line: #e4eaf1;
         --shadow: 0 14px 38px rgba(24, 46, 72, .09);
-    }
-
-    html, body, [class*="css"] {
-        font-family: "Segoe UI", Tahoma, sans-serif;
     }
 
     .stApp {
@@ -384,7 +390,7 @@ st.markdown(
 
 
 # ---------------------------------------------------------------------
-# Sidebar settings
+# Sidebar
 # ---------------------------------------------------------------------
 
 with st.sidebar:
@@ -393,7 +399,6 @@ with st.sidebar:
         "Cut-off รับใบเบิก",
         value=st.session_state.cutoff,
         step=300,
-        help="ใบเบิกที่รับหลังเวลานี้จะถูกติดแท็กใบเบิกเย็น",
     )
     st.caption(f"Cut-off ปัจจุบัน: {st.session_state.cutoff:%H:%M} น.")
     st.divider()
@@ -401,8 +406,6 @@ with st.sidebar:
     st.markdown("🔵 จัดเสร็จ / รอ PD")
     st.markdown("🟢 PD มารับแล้ว")
     st.markdown("🔴 ยกเลิก")
-    st.divider()
-    st.caption("ข้อมูลบันทึกใน SQLite ที่อยู่ข้างไฟล์ app.py")
 
 
 jobs = load_jobs()
@@ -425,46 +428,51 @@ if has_data:
         for _, row in jobs.iterrows()
         if row["picked_time"]
     ]
+    processing_values = [
+        value for value in processing_values if value is not None
+    ]
 
     waiting_values = [
         duration_minutes(row["picked_time"], row["handover_time"])
         for _, row in jobs.iterrows()
         if row["picked_time"] and row["handover_time"]
     ]
+    waiting_values = [
+        value for value in waiting_values if value is not None
+    ]
+
+    # Проверяем наличие значений перед делением на их количество.
+    avg_processing = safe_average(processing_values)
+    avg_waiting = safe_average(waiting_values)
 
     canceled_jobs = jobs[jobs["status"] == "cancelled"]
-
     wasted_values = []
+
     for _, row in canceled_jobs.iterrows():
         work_start = row["in_progress_time"] or row["received_time"]
-        wasted_values.append(
-            duration_minutes(work_start, row["canceled_time"]) or 0
-        )
+        wasted = duration_minutes(work_start, row["canceled_time"])
+        wasted_values.append(wasted if wasted is not None else 0)
 
-    avg_processing = (
-        round(sum(processing_values) / len(processing_values))
-        if processing_values
-        else None
-    )
-    avg_waiting = (
-        round(sum(waiting_values) / len(waiting_values))
-        if waiting_values
-        else None
-    )
     wasted_total = sum(wasted_values)
 else:
     late_count = 0
     late_percentage = 0
-    avg_processing = None
-    avg_waiting = None
+    avg_processing = 0
+    avg_waiting = 0
     canceled_jobs = jobs.copy()
     wasted_total = 0
 
 kpis = st.columns(5)
 kpis[0].metric("📄 JOB ทั้งหมด", f"{len(jobs):,}")
 kpis[1].metric("🔴 ใบเบิกเย็น", f"{late_percentage:.1f}%")
-kpis[2].metric("⏱️ เวลาจัดเฉลี่ย", duration_label(avg_processing))
-kpis[3].metric("🕒 เวลารอ PD เฉลี่ย", duration_label(avg_waiting))
+kpis[2].metric(
+    "⏱️ เวลาจัดเฉลี่ย",
+    duration_label(avg_processing) if processing_values if has_data else "0 นาที",
+)
+kpis[3].metric(
+    "🕒 เวลารอ PD เฉลี่ย",
+    duration_label(avg_waiting),
+)
 kpis[4].metric(
     "❌ ยกเลิก / เสียเวลา",
     f"{len(canceled_jobs)} / {wasted_total} นาที",
@@ -493,8 +501,7 @@ else:
             .reset_index()
         )
         hourly.columns = ["ชั่วโมง", "จำนวน JOB"]
-
-        hourly["เวลา"] = hourly["ชั่วโมง"].apply(
+        hourly["ช่วงเวลา"] = hourly["ชั่วโมง"].apply(
             lambda hour: "🔴 หลัง Cut-off"
             if hour >= st.session_state.cutoff.hour
             else "🟢 ก่อน Cut-off"
@@ -504,7 +511,7 @@ else:
             hourly,
             x="ชั่วโมง",
             y="จำนวน JOB",
-            color="เวลา",
+            color="ช่วงเวลา",
             color_discrete_map={
                 "🟢 ก่อน Cut-off": "#319783",
                 "🔴 หลัง Cut-off": "#db5b63",
@@ -531,29 +538,20 @@ else:
             lambda value: is_late(value, st.session_state.cutoff)
         )
 
-        department_summary = (
+        summary = (
             department_data.groupby("department")
-            .agg(
-                total=("job_number", "count"),
-                late_count=("late", "sum"),
-            )
+            .agg(total=("job_number", "count"), late_count=("late", "sum"))
             .reset_index()
         )
-        department_summary["late_pct"] = (
-            department_summary["late_count"]
-            / department_summary["total"]
-            * 100
-        )
-        department_summary = department_summary.sort_values("late_pct")
+        summary["late_pct"] = summary["late_count"] / summary["total"] * 100
+        summary = summary.sort_values("late_pct")
 
         figure = px.bar(
-            department_summary,
+            summary,
             x="late_pct",
             y="department",
             orientation="h",
-            text=department_summary["late_pct"].map(
-                lambda value: f"{value:.0f}%"
-            ),
+            text=summary["late_pct"].map(lambda value: f"{value:.0f}%"),
             title="สัดส่วนใบเบิกเย็นแยกตามแผนก/ไลน์",
             labels={
                 "late_pct": "ใบเบิกเย็น (%)",
@@ -575,21 +573,21 @@ else:
 
 
 # ---------------------------------------------------------------------
-# Input: bulk and quick manual
+# Bulk and quick JOB input
 # ---------------------------------------------------------------------
 
 st.subheader("📥 รับ JOB เข้า")
 
-department_input = st.text_input(
+department = st.text_input(
     "แผนก / ไลน์ผลิต *",
     placeholder="เช่น PD-Line 1",
     key="department_input",
 )
 
 bulk_text = st.text_area(
-    "📋 วางหลาย JOB ได้ โดยแยกบรรทัด",
+    "📋 วางหลาย JOB โดยแยกบรรทัด",
     placeholder="JOB-6901\nJOB-6902\nJOB-6903, PD-Line 2",
-    help="ใส่เฉพาะ JOB ต่อบรรทัดได้ โดยระบบจะใช้แผนก/ไลน์ด้านบน",
+    help="ถ้าใส่เฉพาะ JOB ระบบจะใช้แผนก/ไลน์ด้านบน",
 )
 
 bulk_col, quick_col = st.columns(2)
@@ -600,7 +598,6 @@ with bulk_col:
         type="primary",
         use_container_width=True,
     ):
-        default_department = department_input.strip()
         entries = []
         invalid_lines = []
 
@@ -609,63 +606,75 @@ with bulk_col:
             if not line:
                 continue
 
-            parts = [part.strip() for part in line.replace("\t", ",").split(",")]
-            job_number = normalize_job_number(parts[0])
-            department = parts[1] if len(parts) > 1 and parts[1] else default_department
+            parts = [
+                part.strip()
+                for part in line.replace("\t", ",").split(",")
+            ]
+            number = normalize_job_number(parts[0])
+            dept = (
+                parts[1]
+                if len(parts) > 1 and parts[1]
+                else department.strip()
+            )
 
-            if not job_number or not department:
+            if not number or not dept:
                 invalid_lines.append(line)
             else:
-                entries.append((job_number, department))
+                entries.append((number, dept))
 
-        existing_numbers = {
-            str(value).casefold()
-            for value in jobs["job_number"].tolist()
-        } if has_data else set()
+        existing = (
+            {str(number).casefold() for number in jobs["job_number"]}
+            if has_data
+            else set()
+        )
 
-        duplicates = [
+        # ตรวจ JOB ซ้ำในรายการที่วางมาด้วย ก่อนเขียนฐานข้อมูล
+        batch_numbers = [number.casefold() for number, _ in entries]
+        duplicate_in_batch = {
+            number
+            for number in batch_numbers
+            if batch_numbers.count(number) > 1
+        }
+
+        duplicates_in_database = [
             number
             for number, _ in entries
-            if number.casefold() in existing_numbers
+            if number.casefold() in existing
         ]
 
         if invalid_lines:
             st.error(
-                "กรุณาระบุแผนก/ไลน์ด้านบน หรือใส่แผนกต่อท้าย JOB ในแต่ละบรรทัด"
+                "กรุณากรอกแผนก/ไลน์ด้านบน หรือระบุแผนกหลังเลข JOB "
+                "เช่น JOB-6901, PD-Line 1"
             )
         elif not entries:
             st.error("กรุณาวางเลข JOB อย่างน้อยหนึ่งรายการ")
-        elif duplicates:
-            st.error(f"JOB เหล่านี้มีในระบบแล้ว: {', '.join(duplicates)}")
+        elif duplicate_in_batch:
+            st.error(
+                "พบเลข JOB ซ้ำในข้อความที่วาง: "
+                + ", ".join(sorted(duplicate_in_batch))
+            )
+        elif duplicates_in_database:
+            st.error(
+                "JOB เหล่านี้มีในระบบแล้ว: "
+                + ", ".join(duplicates_in_database)
+            )
         else:
-            received_at = now_string()
-            with get_connection() as connection:
-                for job_number, department in entries:
-                    connection.execute(
-                        """
-                        INSERT INTO jobs (
-                            job_number, department, received_time, status,
-                            created_at, updated_at
-                        )
-                        VALUES (?, ?, ?, 'received', ?, ?)
-                        """,
-                        (
-                            job_number,
-                            department,
-                            received_at,
-                            received_at,
-                            received_at,
-                        ),
-                    )
-
-            tick_sound()
-            st.success(f"บันทึกรับเรื่องแล้ว {len(entries)} JOB")
-            st.rerun()
+            try:
+                add_jobs_bulk(entries, now_string())
+                play_tick()
+                st.success(f"บันทึกรับเรื่องแล้ว {len(entries)} JOB")
+                st.rerun()
+            except sqlite3.IntegrityError:
+                st.error(
+                    "บันทึกไม่สำเร็จ เนื่องจากมีเลข JOB ซ้ำ "
+                    "กรุณาตรวจสอบข้อมูลแล้วลองอีกครั้ง"
+                )
 
 with quick_col:
-    with st.form("quick_job_form", clear_on_submit=True):
+    with st.form("quick_input", clear_on_submit=True):
         quick_number = st.text_input(
-            "⌨️ พิมพ์ด่วน: เลข 4 หลัก หรือ JOB-xxxx",
+            "⌨️ พิมพ์เลข 4 หลัก หรือ JOB-xxxx",
             placeholder="เช่น 6901",
         )
         quick_submit = st.form_submit_button(
@@ -674,30 +683,33 @@ with quick_col:
         )
 
         if quick_submit:
-            job_number = normalize_job_number(quick_number)
-            department = department_input.strip()
+            number = normalize_job_number(quick_number)
+            dept = department.strip()
 
-            existing_numbers = {
-                str(value).casefold()
-                for value in jobs["job_number"].tolist()
-            } if has_data else set()
+            existing = (
+                {str(value).casefold() for value in jobs["job_number"]}
+                if has_data
+                else set()
+            )
 
-            if not job_number:
+            if not number:
                 st.error("กรุณากรอกเลข JOB")
-            elif not department:
-                st.error("กรุณากรอกแผนก/ไลน์ผลิตก่อนรับ JOB")
-            elif job_number.casefold() in existing_numbers:
+            elif not dept:
+                st.error("กรุณากรอกแผนก/ไลน์ผลิต")
+            elif number.casefold() in existing:
                 st.error("เลข JOB นี้มีในระบบแล้ว")
             else:
-                timestamp = now_string()
-                add_job(job_number, department, timestamp)
-                tick_sound()
-                st.success(f"รับ {job_number} แล้ว")
-                st.rerun()
+                try:
+                    add_jobs_bulk([(number, dept)], now_string())
+                    play_tick()
+                    st.success(f"รับ {number} แล้ว")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.error("บันทึกไม่สำเร็จ เลข JOB นี้อาจมีในระบบแล้ว")
 
 
 # ---------------------------------------------------------------------
-# Status update and cancellation
+# Status update
 # ---------------------------------------------------------------------
 
 st.subheader("🔄 อัปเดตสถานะ JOB")
@@ -717,13 +729,9 @@ else:
             f"{STATUS_LABELS.get(row['status'], row['status'])}": int(row["id"])
             for _, row in active_jobs.iterrows()
         }
-
-        selected_label = st.selectbox(
-            "เลือก JOB",
-            list(job_options.keys()),
-        )
+        selected_label = st.selectbox("เลือก JOB", list(job_options))
         selected_id = job_options[selected_label]
-        selected_job = jobs[jobs["id"] == selected_id].iloc[0]
+        selected = jobs[jobs["id"] == selected_id].iloc[0]
 
         new_status = st.selectbox(
             "สถานะใหม่",
@@ -731,19 +739,13 @@ else:
             format_func=lambda value: STATUS_LABELS[value],
         )
 
-        cancellation_by = ""
-        cancellation_reason = ""
+        cancel_by = ""
+        cancel_reason = ""
 
         if new_status == "cancelled":
-            st.warning("การยกเลิกต้องระบุผู้สั่งยกเลิก PN/PD และสาเหตุ")
-            cancellation_by = st.text_input(
-                "ผู้สั่งยกเลิก PN/PD *",
-                placeholder="ชื่อหรือรหัส PN/PD",
-            )
-            cancellation_reason = st.text_area(
-                "สาเหตุการยกเลิก *",
-                placeholder="เช่น เปลี่ยนแผน หรือยกเลิก JOB",
-            )
+            st.warning("การยกเลิกต้องระบุผู้สั่ง PN/PD และสาเหตุ")
+            cancel_by = st.text_input("ผู้สั่งยกเลิก PN/PD *")
+            cancel_reason = st.text_area("สาเหตุการยกเลิก *")
 
         if st.button(
             "บันทึกสถานะ",
@@ -751,60 +753,26 @@ else:
             use_container_width=True,
         ):
             if new_status == "cancelled" and (
-                not cancellation_by.strip()
-                or not cancellation_reason.strip()
+                not cancel_by.strip() or not cancel_reason.strip()
             ):
                 st.error("กรุณาระบุผู้สั่งยกเลิกและสาเหตุให้ครบ")
+            elif new_status == "handed_over" and not selected["picked_time"]:
+                st.error("ต้องบันทึกจัดเสร็จก่อน จึงบันทึก PD มารับได้")
             else:
-                timestamp = now_string()
-
-                if new_status == "handed_over" and not selected_job["picked_time"]:
-                    st.error("ต้องบันทึกสถานะจัดเสร็จก่อน จึงบันทึก PD มารับได้")
-                else:
-                    update_job(
-                        selected_id,
-                        new_status,
-                        timestamp,
-                        cancellation_by.strip(),
-                        cancellation_reason.strip(),
-                    )
-                    tick_sound()
-                    st.success("บันทึกสถานะและเวลาแล้ว")
-                    st.rerun()
+                update_job(
+                    selected_id,
+                    new_status,
+                    now_string(),
+                    cancel_by.strip(),
+                    cancel_reason.strip(),
+                )
+                play_tick()
+                st.success("อัปเดตสถานะแล้ว")
+                st.rerun()
 
 
 # ---------------------------------------------------------------------
-# Active queue
-# ---------------------------------------------------------------------
-
-st.subheader("⚡ คิวงาน")
-
-if not has_data:
-    st.warning("ยังไม่มีข้อมูลใบเบิก")
-else:
-    active_jobs = jobs[
-        ~jobs["status"].isin(["handed_over", "cancelled"])
-    ]
-
-    if active_jobs.empty:
-        st.info("ไม่มีงานค้างในคิว")
-    else:
-        for _, row in active_jobs.iterrows():
-            late_badge = (
-                " 🔴 ใบเบิกเย็น/ส่งช้า"
-                if is_late(row["received_time"], st.session_state.cutoff)
-                else ""
-            )
-            st.markdown(
-                f"**{row['job_number']}** · {row['department']}  \n"
-                f"{STATUS_LABELS.get(row['status'], row['status'])}"
-                f"{late_badge}  \n"
-                f"รับเรื่อง: `{format_timestamp(row['received_time'])}`"
-            )
-
-
-# ---------------------------------------------------------------------
-# Register, evidence, filters, exports
+# JOB register and cancellation evidence
 # ---------------------------------------------------------------------
 
 st.subheader("📋 ทะเบียน JOB")
@@ -813,18 +781,14 @@ filter_col, late_col, search_col = st.columns([1, 1, 1.5])
 
 status_filter = filter_col.multiselect(
     "กรองสถานะ",
-    list(STATUS_LABELS.keys()),
+    list(STATUS_LABELS),
     format_func=lambda value: STATUS_LABELS[value],
 )
-
 late_filter = late_col.selectbox(
-    "กรองใบเบิกเย็น",
-    ["ทั้งหมด", "ใบเบิกเย็น", "ในเวลา Cut-off"],
+    "กรองเวลา Cut-off",
+    ["ทั้งหมด", "ใบเบิกเย็น", "ในเวลา"],
 )
-
-search_text = search_col.text_input(
-    "ค้นหา JOB หรือแผนก/ไลน์",
-)
+search_text = search_col.text_input("ค้นหา JOB / แผนก")
 
 filtered = jobs.copy()
 
@@ -837,7 +801,7 @@ if late_filter == "ใบเบิกเย็น" and not filtered.empty:
             lambda value: is_late(value, st.session_state.cutoff)
         )
     ]
-elif late_filter == "ในเวลา Cut-off" and not filtered.empty:
+elif late_filter == "ในเวลา" and not filtered.empty:
     filtered = filtered[
         ~filtered["received_time"].apply(
             lambda value: is_late(value, st.session_state.cutoff)
@@ -857,9 +821,6 @@ if search_text.strip() and not filtered.empty:
 display_rows = []
 
 for _, row in filtered.iterrows():
-    processing = duration_minutes(row["received_time"], row["picked_time"])
-    waiting = duration_minutes(row["picked_time"], row["handover_time"])
-
     display_rows.append(
         {
             "เลขที่ JOB": row["job_number"],
@@ -875,31 +836,33 @@ for _, row in filtered.iterrows():
                 if is_late(row["received_time"], st.session_state.cutoff)
                 else "🟢 ในเวลา Cut-off"
             ),
-            "เวลาจัด": duration_label(processing),
-            "เวลารอ PD": duration_label(waiting),
+            "เวลาจัด": duration_label(
+                duration_minutes(row["received_time"], row["picked_time"])
+            ),
+            "เวลารอ PD": duration_label(
+                duration_minutes(row["picked_time"], row["handover_time"])
+            ),
             "ผู้สั่งยกเลิก": row["canceled_by"] or "—",
             "สาเหตุยกเลิก": row["cancel_reason"] or "—",
         }
     )
 
-display_df = pd.DataFrame(
-    display_rows,
-    columns=[
-        "เลขที่ JOB",
-        "แผนก/ไลน์",
-        "📥 รับเรื่อง",
-        "🟡 เริ่มจัด",
-        "🔵 จัดเสร็จ",
-        "🟢 PD รับของ",
-        "❌ ยกเลิก",
-        "สถานะ",
-        "แท็ก",
-        "เวลาจัด",
-        "เวลารอ PD",
-        "ผู้สั่งยกเลิก",
-        "สาเหตุยกเลิก",
-    ],
-)
+display_columns = [
+    "เลขที่ JOB",
+    "แผนก/ไลน์",
+    "📥 รับเรื่อง",
+    "🟡 เริ่มจัด",
+    "🔵 จัดเสร็จ",
+    "🟢 PD รับของ",
+    "❌ ยกเลิก",
+    "สถานะ",
+    "แท็ก",
+    "เวลาจัด",
+    "เวลารอ PD",
+    "ผู้สั่งยกเลิก",
+    "สาเหตุยกเลิก",
+]
+display_df = pd.DataFrame(display_rows, columns=display_columns)
 
 if not has_data:
     st.warning("ยังไม่มีข้อมูลใบเบิก")
@@ -911,21 +874,25 @@ st.dataframe(
     height=420,
 )
 
+
+# ---------------------------------------------------------------------
+# Dispute evidence
+# ---------------------------------------------------------------------
+
 if has_data:
-    canceled_records = jobs[jobs["status"] == "cancelled"]
+    canceled_jobs = jobs[jobs["status"] == "cancelled"]
 
-    if not canceled_records.empty:
-        st.markdown("#### 📄 หลักฐานโต้แย้งรายการยกเลิก")
+    if not canceled_jobs.empty:
+        st.markdown("#### 📄 หลักฐาน Timeline รายการยกเลิก")
 
-        for _, row in canceled_records.iterrows():
+        for _, row in canceled_jobs.iterrows():
             work_start = row["in_progress_time"] or row["received_time"]
             wasted = duration_minutes(work_start, row["canceled_time"])
-            title = (
+
+            with st.expander(
                 f"{row['job_number']} · {row['department']} · "
                 f"ยกเลิก {format_timestamp(row['canceled_time'])}"
-            )
-
-            with st.expander(title):
+            ):
                 st.write(f"**รับเรื่อง:** {format_timestamp(row['received_time'])}")
                 st.write(f"**เริ่มจัด:** {format_timestamp(row['in_progress_time'])}")
                 st.write(f"**จัดเสร็จ:** {format_timestamp(row['picked_time'])}")
@@ -934,19 +901,24 @@ if has_data:
                 st.write(f"**ผู้สั่งยกเลิก:** {row['canceled_by'] or '—'}")
                 st.write(f"**สาเหตุ:** {row['cancel_reason'] or '—'}")
 
-                st.button(
+                if st.button(
                     "🖨️ พิมพ์ / บันทึก PDF",
                     key=f"print_{row['id']}",
-                    on_click=lambda: st.components.v1.html(
+                ):
+                    st.components.v1.html(
                         "<script>window.parent.print();</script>",
                         height=0,
-                    ),
-                )
+                    )
 
+
+# ---------------------------------------------------------------------
+# CSV and Excel export
+# ---------------------------------------------------------------------
 
 csv_data = display_df.to_csv(index=False).encode("utf-8-sig")
+csv_col, excel_col = st.columns(2)
 
-st.download_button(
+csv_col.download_button(
     "📥 Export Data to CSV",
     data=csv_data,
     file_name=f"warehouse_jobs_{date.today():%Y%m%d}.csv",
@@ -956,15 +928,17 @@ st.download_button(
 
 try:
     excel_buffer = BytesIO()
+
     with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
         display_df.to_excel(
             writer,
             index=False,
             sheet_name="JOB Tracking",
         )
+
     excel_buffer.seek(0)
 
-    st.download_button(
+    excel_col.download_button(
         "📊 Export Data to Excel",
         data=excel_buffer,
         file_name=f"warehouse_jobs_{date.today():%Y%m%d}.xlsx",
@@ -972,10 +946,11 @@ try:
         use_container_width=True,
     )
 except ImportError:
-    st.caption("ติดตั้ง openpyxl เพื่อ Export Excel: pip install openpyxl")
+    excel_col.caption(
+        "ติดตั้ง openpyxl เพื่อ Export Excel: pip install openpyxl"
+    )
 
 st.caption(
-    "Cut-off 16:00 น. • เวลาใช้ System Clock ของเครื่องที่รันแอป • "
-    "Wasted Labor Duration คำนวณจากเวลาเริ่มจัด หรือเวลารับเรื่อง "
-    "จนถึงเวลายกเลิก"
+    "Cut-off 16:00 น. • เวลาจาก System Clock ของเครื่องที่รันแอป • "
+    "ใบเบิกเย็นหมายถึงรับหลัง Cut-off"
 )
