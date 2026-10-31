@@ -75,7 +75,7 @@ def initialize_database():
             """
         )
 
-        # ล้างเฉพาะรายการตัวอย่างจากเวอร์ชันก่อนเพียงครั้งเดียว
+        # ล้างเฉพาะข้อมูลจำลองจากเวอร์ชันก่อนเพียงครั้งเดียว
         cleanup_key = "legacy_mock_rows_removed_v1"
         cleaned = connection.execute(
             "SELECT value FROM app_metadata WHERE key = ?",
@@ -103,7 +103,7 @@ def load_jobs():
 
 
 def add_jobs_bulk(entries, received_time):
-    """บันทึกหลาย JOB ใน transaction เดียว ถ้ารายการใดผิดพลาดจะ rollback ทั้งชุด"""
+    """บันทึกหลาย JOB ใน transaction เดียว"""
     now = datetime.now().isoformat(sep=" ", timespec="seconds")
 
     with get_connection() as connection:
@@ -198,7 +198,7 @@ def duration_minutes(start, end):
 
 
 def safe_average(values):
-    """คืนค่าเฉลี่ยจำนวนเต็ม หรือ 0 เมื่อยังไม่มีข้อมูล"""
+    """คำนวณค่าเฉลี่ยเมื่อมีข้อมูล มิฉะนั้นคืนค่า 0"""
     if values:
         return round(sum(values) / len(values))
     return 0
@@ -290,7 +290,7 @@ if "cutoff" not in st.session_state:
 
 initialize_database()
 
-# CSS ทั้งหมดอยู่ใน string ของ st.markdown เพื่อป้องกัน SyntaxError
+# CSS อยู่ภายใน string ของ st.markdown เพื่อป้องกัน SyntaxError
 st.markdown(
     """
     <style>
@@ -411,10 +411,9 @@ with st.sidebar:
 jobs = load_jobs()
 has_data = not jobs.empty
 
-
-# ---------------------------------------------------------------------
-# KPI dashboard
-# ---------------------------------------------------------------------
+# กำหนดค่าเริ่มต้นไว้ก่อน เพื่อให้ใช้ได้แม้ฐานข้อมูลยังว่าง
+processing_values = []
+waiting_values = []
 
 if has_data:
     late_count = sum(
@@ -441,7 +440,6 @@ if has_data:
         value for value in waiting_values if value is not None
     ]
 
-    # Проверяем наличие значений перед делением на их количество.
     avg_processing = safe_average(processing_values)
     avg_waiting = safe_average(waiting_values)
 
@@ -462,17 +460,31 @@ else:
     canceled_jobs = jobs.copy()
     wasted_total = 0
 
+
+# ---------------------------------------------------------------------
+# KPI dashboard
+# ---------------------------------------------------------------------
+
 kpis = st.columns(5)
+
 kpis[0].metric("📄 JOB ทั้งหมด", f"{len(jobs):,}")
 kpis[1].metric("🔴 ใบเบิกเย็น", f"{late_percentage:.1f}%")
+
+# เงื่อนไขนี้แก้ SyntaxError และป้องกันการหารด้วยศูนย์
 kpis[2].metric(
     "⏱️ เวลาจัดเฉลี่ย",
-    duration_label(avg_processing) if processing_values if has_data else "0 นาที",
+    duration_label(avg_processing)
+    if (processing_values and has_data)
+    else "0 นาที",
 )
+
 kpis[3].metric(
     "🕒 เวลารอ PD เฉลี่ย",
-    duration_label(avg_waiting),
+    duration_label(avg_waiting)
+    if (waiting_values and has_data)
+    else "0 นาที",
 )
+
 kpis[4].metric(
     "❌ ยกเลิก / เสียเวลา",
     f"{len(canceled_jobs)} / {wasted_total} นาที",
@@ -540,7 +552,10 @@ else:
 
         summary = (
             department_data.groupby("department")
-            .agg(total=("job_number", "count"), late_count=("late", "sum"))
+            .agg(
+                total=("job_number", "count"),
+                late_count=("late", "sum"),
+            )
             .reset_index()
         )
         summary["late_pct"] = summary["late_count"] / summary["total"] * 100
@@ -551,7 +566,9 @@ else:
             x="late_pct",
             y="department",
             orientation="h",
-            text=summary["late_pct"].map(lambda value: f"{value:.0f}%"),
+            text=summary["late_pct"].map(
+                lambda value: f"{value:.0f}%"
+            ),
             title="สัดส่วนใบเบิกเย็นแยกตามแผนก/ไลน์",
             labels={
                 "late_pct": "ใบเบิกเย็น (%)",
@@ -611,16 +628,16 @@ with bulk_col:
                 for part in line.replace("\t", ",").split(",")
             ]
             number = normalize_job_number(parts[0])
-            dept = (
+            department_for_job = (
                 parts[1]
                 if len(parts) > 1 and parts[1]
                 else department.strip()
             )
 
-            if not number or not dept:
+            if not number or not department_for_job:
                 invalid_lines.append(line)
             else:
-                entries.append((number, dept))
+                entries.append((number, department_for_job))
 
         existing = (
             {str(number).casefold() for number in jobs["job_number"]}
@@ -628,15 +645,11 @@ with bulk_col:
             else set()
         )
 
-        # ตรวจ JOB ซ้ำในรายการที่วางมาด้วย ก่อนเขียนฐานข้อมูล
         batch_numbers = [number.casefold() for number, _ in entries]
         duplicate_in_batch = {
-            number
-            for number in batch_numbers
-            if batch_numbers.count(number) > 1
+            number for number in batch_numbers if batch_numbers.count(number) > 1
         }
-
-        duplicates_in_database = [
+        duplicate_in_database = [
             number
             for number, _ in entries
             if number.casefold() in existing
@@ -654,10 +667,10 @@ with bulk_col:
                 "พบเลข JOB ซ้ำในข้อความที่วาง: "
                 + ", ".join(sorted(duplicate_in_batch))
             )
-        elif duplicates_in_database:
+        elif duplicate_in_database:
             st.error(
                 "JOB เหล่านี้มีในระบบแล้ว: "
-                + ", ".join(duplicates_in_database)
+                + ", ".join(duplicate_in_database)
             )
         else:
             try:
@@ -667,7 +680,7 @@ with bulk_col:
                 st.rerun()
             except sqlite3.IntegrityError:
                 st.error(
-                    "บันทึกไม่สำเร็จ เนื่องจากมีเลข JOB ซ้ำ "
+                    "บันทึกไม่สำเร็จเนื่องจากมีเลข JOB ซ้ำ "
                     "กรุณาตรวจสอบข้อมูลแล้วลองอีกครั้ง"
                 )
 
@@ -684,7 +697,7 @@ with quick_col:
 
         if quick_submit:
             number = normalize_job_number(quick_number)
-            dept = department.strip()
+            department_for_job = department.strip()
 
             existing = (
                 {str(value).casefold() for value in jobs["job_number"]}
@@ -694,13 +707,16 @@ with quick_col:
 
             if not number:
                 st.error("กรุณากรอกเลข JOB")
-            elif not dept:
+            elif not department_for_job:
                 st.error("กรุณากรอกแผนก/ไลน์ผลิต")
             elif number.casefold() in existing:
                 st.error("เลข JOB นี้มีในระบบแล้ว")
             else:
                 try:
-                    add_jobs_bulk([(number, dept)], now_string())
+                    add_jobs_bulk(
+                        [(number, department_for_job)],
+                        now_string(),
+                    )
                     play_tick()
                     st.success(f"รับ {number} แล้ว")
                     st.rerun()
@@ -709,7 +725,7 @@ with quick_col:
 
 
 # ---------------------------------------------------------------------
-# Status update
+# Update JOB status
 # ---------------------------------------------------------------------
 
 st.subheader("🔄 อัปเดตสถานะ JOB")
@@ -731,7 +747,7 @@ else:
         }
         selected_label = st.selectbox("เลือก JOB", list(job_options))
         selected_id = job_options[selected_label]
-        selected = jobs[jobs["id"] == selected_id].iloc[0]
+        selected_job = jobs[jobs["id"] == selected_id].iloc[0]
 
         new_status = st.selectbox(
             "สถานะใหม่",
@@ -739,12 +755,12 @@ else:
             format_func=lambda value: STATUS_LABELS[value],
         )
 
-        cancel_by = ""
+        canceled_by = ""
         cancel_reason = ""
 
         if new_status == "cancelled":
             st.warning("การยกเลิกต้องระบุผู้สั่ง PN/PD และสาเหตุ")
-            cancel_by = st.text_input("ผู้สั่งยกเลิก PN/PD *")
+            canceled_by = st.text_input("ผู้สั่งยกเลิก PN/PD *")
             cancel_reason = st.text_area("สาเหตุการยกเลิก *")
 
         if st.button(
@@ -753,17 +769,20 @@ else:
             use_container_width=True,
         ):
             if new_status == "cancelled" and (
-                not cancel_by.strip() or not cancel_reason.strip()
+                not canceled_by.strip() or not cancel_reason.strip()
             ):
                 st.error("กรุณาระบุผู้สั่งยกเลิกและสาเหตุให้ครบ")
-            elif new_status == "handed_over" and not selected["picked_time"]:
+            elif (
+                new_status == "handed_over"
+                and not selected_job["picked_time"]
+            ):
                 st.error("ต้องบันทึกจัดเสร็จก่อน จึงบันทึก PD มารับได้")
             else:
                 update_job(
                     selected_id,
                     new_status,
                     now_string(),
-                    cancel_by.strip(),
+                    canceled_by.strip(),
                     cancel_reason.strip(),
                 )
                 play_tick()
@@ -772,7 +791,7 @@ else:
 
 
 # ---------------------------------------------------------------------
-# JOB register and cancellation evidence
+# JOB register and filters
 # ---------------------------------------------------------------------
 
 st.subheader("📋 ทะเบียน JOB")
@@ -818,6 +837,22 @@ if search_text.strip() and not filtered.empty:
         )
     ]
 
+display_columns = [
+    "เลขที่ JOB",
+    "แผนก/ไลน์",
+    "📥 รับเรื่อง",
+    "🟡 เริ่มจัด",
+    "🔵 จัดเสร็จ",
+    "🟢 PD รับของ",
+    "❌ ยกเลิก",
+    "สถานะ",
+    "แท็ก",
+    "เวลาจัด",
+    "เวลารอ PD",
+    "ผู้สั่งยกเลิก",
+    "สาเหตุยกเลิก",
+]
+
 display_rows = []
 
 for _, row in filtered.iterrows():
@@ -847,21 +882,6 @@ for _, row in filtered.iterrows():
         }
     )
 
-display_columns = [
-    "เลขที่ JOB",
-    "แผนก/ไลน์",
-    "📥 รับเรื่อง",
-    "🟡 เริ่มจัด",
-    "🔵 จัดเสร็จ",
-    "🟢 PD รับของ",
-    "❌ ยกเลิก",
-    "สถานะ",
-    "แท็ก",
-    "เวลาจัด",
-    "เวลารอ PD",
-    "ผู้สั่งยกเลิก",
-    "สาเหตุยกเลิก",
-]
 display_df = pd.DataFrame(display_rows, columns=display_columns)
 
 if not has_data:
@@ -876,7 +896,7 @@ st.dataframe(
 
 
 # ---------------------------------------------------------------------
-# Dispute evidence
+# Cancellation evidence
 # ---------------------------------------------------------------------
 
 if has_data:
@@ -952,5 +972,5 @@ except ImportError:
 
 st.caption(
     "Cut-off 16:00 น. • เวลาจาก System Clock ของเครื่องที่รันแอป • "
-    "ใบเบิกเย็นหมายถึงรับหลัง Cut-off"
+    "เวลาเฉลี่ยแสดง 0 นาทีเมื่อยังไม่มีรายการที่คำนวณได้"
 )
