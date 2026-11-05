@@ -3,7 +3,7 @@
 รันด้วย:
     streamlit run app.py
 
-ติดตั้ง:
+ติดตั้ง dependencies:
     pip install streamlit pandas plotly openpyxl pytz
 """
 
@@ -41,7 +41,6 @@ STANDARD_DEPARTMENTS = [
     "คลังวัตถุดิบ&แพคเกจจิ้ง",
     "อื่นๆ",
 ]
-
 PD_OPTIONS = [f"L{i}" for i in range(1, 11)]
 
 STATUS_LABELS = {
@@ -62,7 +61,7 @@ DB_PATH = Path(
 
 
 # ---------------------------------------------------------------------
-# Thailand time and calculation helpers
+# Thailand time and duration helpers
 # ---------------------------------------------------------------------
 
 def bangkok_now():
@@ -120,12 +119,14 @@ def duration_label(minutes):
 
 
 def safe_average(values):
-    values = [
+    valid_values = [
         value for value in values
         if value is not None and pd.notna(value)
     ]
-    if values:
-        return round(sum(values) / len(values))
+
+    if valid_values:
+        return round(sum(valid_values) / len(valid_values))
+
     return 0
 
 
@@ -139,8 +140,10 @@ def normalize_job_number(value):
 
     if not value:
         return ""
+
     if value.upper().startswith("JOB-"):
         return value.upper()
+
     if value.isdigit() and len(value) == 4:
         return f"JOB-{value}"
 
@@ -185,9 +188,11 @@ def initialize_database():
             """
         )
 
-        columns = {
+        existing_columns = {
             row["name"]
-            for row in connection.execute("PRAGMA table_info(requisitions)")
+            for row in connection.execute(
+                "PRAGMA table_info(requisitions)"
+            )
         }
 
         migrations = {
@@ -212,16 +217,19 @@ def initialize_database():
         }
 
         for column, definition in migrations.items():
-            if column not in columns:
+            if column not in existing_columns:
                 connection.execute(
                     f"ALTER TABLE requisitions ADD COLUMN {column} {definition}"
                 )
 
-        # Map common columns from older app versions while preserving records.
         columns = {
             row["name"]
-            for row in connection.execute("PRAGMA table_info(requisitions)")
+            for row in connection.execute(
+                "PRAGMA table_info(requisitions)"
+            )
         }
+
+        # Map fields from older app schemas when present.
         legacy_mappings = {
             "requisition_no": "job_number",
             "item_summary": "product_name",
@@ -242,6 +250,7 @@ def initialize_database():
                     """
                 )
 
+        # Backfill computed durations for older rows.
         rows = connection.execute(
             """
             SELECT id, received_at, picked_at, handover_at,
@@ -294,17 +303,17 @@ def insert_records(entries):
             """,
             [
                 (
-                    item["job_number"],
-                    item["department_option"],
-                    item["department"],
-                    item["pd_zone"],
-                    item["product_name"],
-                    item["quantity"],
-                    item["received_at"],
+                    entry["job_number"],
+                    entry["department_option"],
+                    entry["department"],
+                    entry["pd_zone"],
+                    entry["product_name"],
+                    entry["quantity"],
+                    entry["received_at"],
                     now,
                     now,
                 )
-                for item in entries
+                for entry in entries
             ],
         )
 
@@ -338,8 +347,14 @@ def update_workflow_times(record_id, received_at, picked_at, handover_at, status
 
 
 def update_record(record_id, values):
-    processing = duration_minutes(values["received_at"], values["picked_at"])
-    waiting = duration_minutes(values["picked_at"], values["handover_at"])
+    processing = duration_minutes(
+        values["received_at"],
+        values["picked_at"],
+    )
+    waiting = duration_minutes(
+        values["picked_at"],
+        values["handover_at"],
+    )
 
     with get_connection() as connection:
         connection.execute(
@@ -407,13 +422,14 @@ def show_live_clock():
                display:inline-block;padding:10px 15px;
                border:1px solid #E2E8F0;border-radius:12px;
                background:#FFFFFF;color:#1E293B;
-               box-shadow:0 10px 25px -5px rgba(0,0,0,.05);
-               font-family:Prompt,Segoe UI,Tahoma,sans-serif;
+               box-shadow:0 10px 30px rgba(0,0,0,.05);
+               font-family:Kanit,Prompt,Segoe UI,sans-serif;
                font-size:14px;font-weight:600;">
         </div>
         <script>
         (() => {
           const clock = document.getElementById("th-clock");
+
           function updateClock() {
             clock.textContent = new Intl.DateTimeFormat("th-TH", {
               timeZone: "Asia/Bangkok",
@@ -427,6 +443,7 @@ def show_live_clock():
               hour12: false
             }).format(new Date()) + " น. · Asia/Bangkok";
           }
+
           updateClock();
           window.setInterval(updateClock, 1000);
         })();
@@ -471,7 +488,7 @@ def play_tick():
 
 
 # ---------------------------------------------------------------------
-# App configuration and login
+# Streamlit setup and login
 # ---------------------------------------------------------------------
 
 st.set_page_config(
@@ -487,38 +504,163 @@ if "page" not in st.session_state:
     st.session_state.page = "📝 บันทึกใบเบิก"
 
 
-def inject_login_css():
+def inject_global_css():
     st.markdown(
         """
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&family=Prompt:wght@300;400;500;600;700&display=swap');
+
+        :root {
+            --page-bg: #F8FAFC;
+            --surface: #FFFFFF;
+            --ink: #1E293B;
+            --muted: #64748B;
+            --line: #E2E8F0;
+            --soft-shadow: 0 10px 30px rgba(0,0,0,.05);
+            --emerald: #0F9F82;
+            --sky: #1689B9;
+        }
 
         html, body, [class*="css"] {
-            font-family: 'Prompt', sans-serif;
+            font-family: 'Kanit', 'Prompt', sans-serif;
         }
 
         .stApp {
+            color: var(--ink);
             background:
-                radial-gradient(ellipse at 15% 5%, rgba(20,184,166,.12), transparent 34%),
-                #F8FAFC;
-            color: #1E293B;
+                radial-gradient(ellipse at 7% 0%, rgba(20,184,166,.07), transparent 32%),
+                radial-gradient(ellipse at 96% 5%, rgba(59,130,246,.05), transparent 30%),
+                var(--page-bg);
         }
 
-        .login-card {
-            max-width: 440px;
-            margin: 8vh auto 0;
-            padding: 28px;
-            border: 1px solid #E2E8F0;
+        .block-container {
+            max-width: 1520px;
+            padding-top: 1.1rem;
+            padding-bottom: 2.5rem;
+        }
+
+        [data-testid="stHeader"] {
+            background: rgba(248,250,252,.8);
+        }
+
+        [data-testid="stSidebar"] {
+            background: #F1F5F9;
+            border-right: 1px solid var(--line);
+        }
+
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+            color: var(--ink);
+        }
+
+        [data-testid="stSidebar"] hr {
+            border-color: #DCE4ED;
+        }
+
+        .hero {
+            padding: 23px 28px;
+            border: 1px solid rgba(255,255,255,.65);
             border-radius: 16px;
-            background: #FFFFFF;
-            box-shadow: 0 10px 25px -5px rgba(0,0,0,.05);
+            color: #FFFFFF;
+            background: linear-gradient(115deg,#142A41,#176D70);
+            box-shadow: 0 14px 34px rgba(25,54,78,.13);
+            margin-bottom: 12px;
         }
 
-        div.stFormSubmitButton > button[kind="primary"] {
-            color: white;
-            border: 0;
+        .hero p {
+            margin: 5px 0 0;
+            color: #D7E9EC;
+            font-size: 13px;
+        }
+
+        [data-testid="stMetric"] {
+            min-height: 122px;
+            padding: 17px 18px;
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            background: var(--surface);
+            box-shadow: var(--soft-shadow);
+        }
+
+        [data-testid="stMetricLabel"] {
+            color: var(--muted);
+            font-weight: 500;
+        }
+
+        [data-testid="stMetricValue"] {
+            color: var(--ink);
+            font-weight: 700;
+        }
+
+        div[data-testid="stForm"],
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            background: var(--surface);
+            box-shadow: var(--soft-shadow);
+        }
+
+        div[data-testid="stForm"] {
+            padding: 18px;
+        }
+
+        div[data-testid="stDataFrame"] {
+            overflow: hidden;
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            background: var(--surface);
+            box-shadow: var(--soft-shadow);
+        }
+
+        [data-testid="stTextInput"] input,
+        [data-testid="stNumberInput"] input,
+        [data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+        [data-testid="stDateInput"] input,
+        [data-testid="stTimeInput"] input,
+        [data-testid="stTextArea"] textarea {
+            border-radius: 11px;
+            border-color: #DCE4ED;
+        }
+
+        div.stButton > button,
+        div.stFormSubmitButton > button,
+        div.stDownloadButton > button {
+            min-height: 40px;
             border-radius: 12px;
-            background: linear-gradient(110deg,#0F9F82,#1689B9);
+            font-family: 'Kanit', 'Prompt', sans-serif;
+            font-weight: 600;
+            transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
+        }
+
+        div.stButton > button[kind="primary"],
+        div.stFormSubmitButton > button[kind="primary"],
+        div.stDownloadButton > button[kind="primary"] {
+            color: #FFFFFF;
+            border: 0;
+            background: linear-gradient(110deg,var(--emerald),var(--sky));
+            box-shadow: 0 7px 18px rgba(15,159,130,.18);
+        }
+
+        div.stButton > button:hover,
+        div.stFormSubmitButton > button:hover,
+        div.stDownloadButton > button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 24px rgba(22,70,90,.15);
+            filter: brightness(1.03);
+        }
+
+        div.stButton > button:active,
+        div.stFormSubmitButton > button:active {
+            transform: scale(.985);
+        }
+
+        @media (max-width: 700px) {
+            .block-container {
+                padding-left: 1rem;
+                padding-right: 1rem;
+            }
+            .hero {
+                padding: 19px;
+            }
         }
         </style>
         """,
@@ -527,33 +669,34 @@ def inject_login_css():
 
 
 def show_login():
-    inject_login_css()
+    inject_global_css()
 
     st.markdown(
         """
-        <div class="login-card">
+        <div class="hero">
           <h1>📦 PK Warehouse</h1>
-          <p>เข้าสู่ระบบบันทึกและวิเคราะห์ใบเบิกคลังสินค้า</p>
+          <p>เข้าสู่ระบบติดตามและวิเคราะห์ใบเบิกคลังสินค้า</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button(
-            "เข้าสู่ระบบ",
-            type="primary",
-            use_container_width=True,
-        )
+    with st.container(border=True):
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button(
+                "เข้าสู่ระบบ",
+                type="primary",
+                use_container_width=True,
+            )
 
-    if submitted:
-        if username == LOGIN_USERNAME and password == LOGIN_PASSWORD:
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("Username หรือ Password ไม่ถูกต้อง")
+            if submitted:
+                if username == LOGIN_USERNAME and password == LOGIN_PASSWORD:
+                    st.session_state.authenticated = True
+                    st.rerun()
+                else:
+                    st.error("Username หรือ Password ไม่ถูกต้อง")
 
 
 if not st.session_state.authenticated:
@@ -562,180 +705,10 @@ if not st.session_state.authenticated:
 
 
 # ---------------------------------------------------------------------
-# Enterprise theme CSS
+# Navigation and app header
 # ---------------------------------------------------------------------
 
-st.markdown(
-    """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
-
-    :root {
-        --app-bg: #F8FAFC;
-        --surface: #FFFFFF;
-        --ink: #1E293B;
-        --muted: #64748B;
-        --line: #E2E8F0;
-        --shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05);
-        --green: #0F9F82;
-        --blue: #1689B9;
-    }
-
-    html, body, [class*="css"] {
-        font-family: 'Prompt', sans-serif;
-    }
-
-    .stApp {
-        color: var(--ink);
-        background:
-            radial-gradient(ellipse at 8% 0%, rgba(20,184,166,.07), transparent 32%),
-            radial-gradient(ellipse at 96% 6%, rgba(37,99,235,.05), transparent 30%),
-            var(--app-bg);
-    }
-
-    .block-container {
-        max-width: 1520px;
-        padding-top: 1.1rem;
-        padding-bottom: 2.5rem;
-    }
-
-    [data-testid="stHeader"] {
-        background: rgba(248,250,252,.82);
-    }
-
-    [data-testid="stSidebar"] {
-        background: #F1F5F9;
-        border-right: 1px solid var(--line);
-    }
-
-    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
-        color: #1E293B;
-    }
-
-    [data-testid="stSidebar"] hr {
-        border-color: #DCE4ED;
-    }
-
-    .hero {
-        padding: 23px 27px;
-        border: 1px solid rgba(255,255,255,.7);
-        border-radius: 16px;
-        color: white;
-        background: linear-gradient(115deg,#132940,#176D70);
-        box-shadow: 0 14px 32px rgba(25,54,78,.13);
-        margin-bottom: 12px;
-    }
-
-    .hero p {
-        margin: 5px 0 0;
-        color: #D8E9EC;
-        font-size: 13px;
-    }
-
-    [data-testid="stMetric"] {
-        min-height: 120px;
-        padding: 17px 18px;
-        border: 1px solid var(--line);
-        border-radius: 16px;
-        background: var(--surface);
-        box-shadow: var(--shadow);
-    }
-
-    [data-testid="stMetricLabel"] {
-        color: var(--muted);
-        font-weight: 500;
-    }
-
-    [data-testid="stMetricValue"] {
-        color: var(--ink);
-        font-weight: 700;
-    }
-
-    div[data-testid="stForm"],
-    div[data-testid="stVerticalBlockBorderWrapper"] {
-        border: 1px solid var(--line);
-        border-radius: 16px;
-        background: var(--surface);
-        box-shadow: var(--shadow);
-    }
-
-    div[data-testid="stForm"] {
-        padding: 18px;
-    }
-
-    div[data-testid="stDataFrame"] {
-        overflow: hidden;
-        border: 1px solid var(--line);
-        border-radius: 16px;
-        background: var(--surface);
-        box-shadow: var(--shadow);
-    }
-
-    [data-testid="stTextInput"] input,
-    [data-testid="stNumberInput"] input,
-    [data-testid="stSelectbox"] div[data-baseweb="select"] > div,
-    [data-testid="stDateInput"] input,
-    [data-testid="stTimeInput"] input,
-    [data-testid="stTextArea"] textarea {
-        border-radius: 10px;
-    }
-
-    div.stButton > button,
-    div.stFormSubmitButton > button,
-    div.stDownloadButton > button {
-        min-height: 40px;
-        border-radius: 12px;
-        font-family: 'Prompt', sans-serif;
-        font-weight: 600;
-        transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
-    }
-
-    div.stButton > button[kind="primary"],
-    div.stFormSubmitButton > button[kind="primary"],
-    div.stDownloadButton > button[kind="primary"] {
-        color: #FFFFFF;
-        border: 0;
-        background: linear-gradient(110deg, var(--green), var(--blue));
-        box-shadow: 0 7px 16px rgba(15,159,130,.18);
-    }
-
-    div.stButton > button:hover,
-    div.stFormSubmitButton > button:hover,
-    div.stDownloadButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 10px 22px rgba(22,70,90,.15);
-        filter: brightness(1.03);
-    }
-
-    div.stButton > button:active,
-    div.stFormSubmitButton > button:active {
-        transform: scale(.985);
-    }
-
-    .section-caption {
-        color: var(--muted);
-        font-size: 12px;
-    }
-
-    @media (max-width: 700px) {
-        .block-container {
-            padding-left: 1rem;
-            padding-right: 1rem;
-        }
-        .hero {
-            padding: 19px;
-        }
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-
-# ---------------------------------------------------------------------
-# Navigation and shared data
-# ---------------------------------------------------------------------
-
+inject_global_css()
 initialize_database()
 
 with st.sidebar:
@@ -781,16 +754,16 @@ records = load_records()
 def select_date_range(prefix):
     today = bangkok_now().date()
 
-    choice = st.selectbox(
+    selection = st.selectbox(
         "ช่วงวันที่",
         ["วันนี้", "สัปดาห์นี้", "เลือกช่วงวันที่"],
-        key=f"{prefix}_date_choice",
+        key=f"{prefix}_date_selection",
     )
 
-    if choice == "วันนี้":
+    if selection == "วันนี้":
         return today, today
 
-    if choice == "สัปดาห์นี้":
+    if selection == "สัปดาห์นี้":
         return today - timedelta(days=today.weekday()), today
 
     start_col, end_col = st.columns(2)
@@ -824,7 +797,7 @@ def filter_records(dataframe, start_date, end_date, search_text=""):
         )
     )
 
-    result = dataframe[
+    filtered = dataframe[
         received_dates.apply(
             lambda value: value is not None
             and start_date <= value <= end_date
@@ -833,7 +806,7 @@ def filter_records(dataframe, start_date, end_date, search_text=""):
 
     query = search_text.strip().casefold()
     if query:
-        searchable_columns = [
+        columns = [
             column
             for column in [
                 "job_number",
@@ -841,12 +814,12 @@ def filter_records(dataframe, start_date, end_date, search_text=""):
                 "department",
                 "pd_zone",
             ]
-            if column in result.columns
+            if column in filtered.columns
         ]
 
-        if searchable_columns:
+        if columns:
             mask = (
-                result[searchable_columns]
+                filtered[columns]
                 .fillna("")
                 .astype(str)
                 .apply(
@@ -857,20 +830,35 @@ def filter_records(dataframe, start_date, end_date, search_text=""):
                 )
                 .any(axis=1)
             )
-            result = result[mask]
+            filtered = filtered[mask]
 
-    return result
+    return filtered
 
 
-def status_style(value):
-    if "เสร็จสิ้น" in str(value):
-        return "background-color:#D1FAE5;color:#065F46;font-weight:600"
-    if "ยกเลิก" in str(value):
-        return "background-color:#FEE2E2;color:#991B1B;font-weight:600"
-    if "จัดเสร็จ" in str(value):
-        return "background-color:#DBEAFE;color:#1E40AF;font-weight:600"
-    if "กำลังจัด" in str(value) or "รอจัด" in str(value):
-        return "background-color:#FEF3C7;color:#92400E;font-weight:600"
+def status_cell_style(value):
+    value = str(value)
+
+    if "เสร็จสิ้น" in value:
+        return (
+            "background-color:#D1FAE5;color:#065F46;"
+            "font-weight:600;border-radius:999px"
+        )
+    if "ยกเลิก" in value:
+        return (
+            "background-color:#FEE2E2;color:#991B1B;"
+            "font-weight:600;border-radius:999px"
+        )
+    if "จัดเสร็จ" in value:
+        return (
+            "background-color:#DBEAFE;color:#1E40AF;"
+            "font-weight:600;border-radius:999px"
+        )
+    if "กำลังจัด" in value or "รอจัด" in value:
+        return (
+            "background-color:#FEF3C7;color:#92400E;"
+            "font-weight:600;border-radius:999px"
+        )
+
     return ""
 
 
@@ -931,7 +919,10 @@ def create_display_table(dataframe):
 
 
 def show_styled_table(dataframe, height=450):
-    styled = dataframe.style.map(status_style, subset=["สถานะ"])
+    styled = dataframe.style.map(
+        status_cell_style,
+        subset=["สถานะ"],
+    )
     st.dataframe(
         styled,
         use_container_width=True,
@@ -941,76 +932,94 @@ def show_styled_table(dataframe, height=450):
 
 
 # ---------------------------------------------------------------------
-# Page 1: New requisitions
+# Page 1: Add multiple jobs
 # ---------------------------------------------------------------------
 
 if page == "📝 บันทึกใบเบิก":
     st.subheader("📝 บันทึกใบเบิก")
     st.caption(
-        f"เวลาปัจจุบันประเทศไทย: {bangkok_now():%Y-%m-%d %H:%M:%S} น. "
-        "ระบบประทับเวลาตอนกดบันทึก"
+        f"เวลาไทย: {bangkok_now():%Y-%m-%d %H:%M:%S} น. "
+        "ระบบจะประทับเวลาตอนกดบันทึก"
     )
 
     st.info(
-        "แผนกมาตรฐาน: "
+        "รายชื่อแผนกมาตรฐาน: "
         + " • ".join(STANDARD_DEPARTMENTS)
-        + " | พิมพ์แผนกอื่นในคอลัมน์แผนกได้"
+        + " | ในแต่ละแถวเลือกแผนกมาตรฐานหรือพิมพ์ชื่อใหม่ได้ในช่องเดียว"
+    )
+
+    row_count = st.selectbox(
+        "จำนวนแถวสำหรับกรอก JOB",
+        list(range(1, 11)),
+        index=2,
+        key="new_job_row_count",
     )
 
     with st.container(border=True):
-        st.markdown("#### รายการ JOB ที่ต้องการรับเข้า")
+        st.markdown("#### รายการ JOB")
         st.caption(
-            "เพิ่มหลายแถวได้ในตารางเดียว • PD เลือกได้ตั้งแต่ L1 ถึง L10"
+            "ช่องแผนกเป็น dropdown ที่รับข้อความใหม่ได้ "
+            "• PD/ไลน์เลือกได้เฉพาะ L1–L10"
         )
 
         with st.form("new_records_form", clear_on_submit=True):
-            initial_rows = pd.DataFrame(
-                [
-                    {
-                        "เลขที่ JOB": "",
-                        "แผนก": "",
-                        "PD / ไลน์ผลิต": "L1",
-                        "ชื่อสินค้า": "",
-                        "จำนวน": 1,
-                    }
-                ]
-            )
+            entries = []
 
-            entry_df = st.data_editor(
-                initial_rows,
-                num_rows="dynamic",
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "เลขที่ JOB": st.column_config.TextColumn(
-                        "เลขที่ JOB",
-                        help="ตัวอย่างรูปแบบ: JOB-6901 หรือเลข 4 หลัก",
-                    ),
-                    "แผนก": st.column_config.TextColumn(
-                        "แผนก",
-                        help=(
-                            "พิมพ์ชื่อแผนก เช่น "
-                            + ", ".join(STANDARD_DEPARTMENTS)
-                        ),
-                        required=True,
-                    ),
-                    "PD / ไลน์ผลิต": st.column_config.SelectboxColumn(
-                        "PD / ไลน์ผลิต",
-                        options=PD_OPTIONS,
-                        required=True,
-                    ),
-                    "ชื่อสินค้า": st.column_config.TextColumn(
-                        "ชื่อสินค้า",
-                        required=True,
-                    ),
-                    "จำนวน": st.column_config.NumberColumn(
-                        "จำนวน",
-                        min_value=1,
-                        step=1,
-                        format="%d",
-                    ),
-                },
-            )
+            for index in range(row_count):
+                st.markdown(f"**รายการที่ {index + 1}**")
+                job_col, dept_col, pd_col, product_col, qty_col = st.columns(
+                    [1.05, 1.55, 0.8, 1.5, 0.6]
+                )
+
+                job_number = job_col.text_input(
+                    "เลขที่ JOB",
+                    key=f"new_job_{index}",
+                    placeholder="JOB-6901",
+                )
+
+                department = dept_col.selectbox(
+                    "แผนก",
+                    STANDARD_DEPARTMENTS,
+                    accept_new_options=True,
+                    key=f"new_department_{index}",
+                    help="เลือกจากรายการหรือพิมพ์ชื่อแผนกใหม่",
+                )
+
+                pd_zone = pd_col.selectbox(
+                    "PD / ไลน์",
+                    PD_OPTIONS,
+                    key=f"new_pd_{index}",
+                )
+
+                product_name = product_col.text_input(
+                    "ชื่อสินค้า",
+                    key=f"new_product_{index}",
+                    placeholder="ชื่อสินค้า",
+                )
+
+                quantity = qty_col.number_input(
+                    "จำนวน",
+                    min_value=1,
+                    step=1,
+                    value=1,
+                    key=f"new_quantity_{index}",
+                )
+
+                entries.append(
+                    {
+                        "job_number": job_number,
+                        "department": department,
+                        "pd_zone": pd_zone,
+                        "product_name": product_name,
+                        "quantity": quantity,
+                    }
+                )
+
+                if index < row_count - 1:
+                    st.markdown(
+                        "<hr style='margin:8px 0;border-color:#E2E8F0'>",
+                        unsafe_allow_html=True,
+                    )
 
             submit_entries = st.form_submit_button(
                 "📥 บันทึกรับเรื่องทั้งหมด",
@@ -1019,54 +1028,36 @@ if page == "📝 บันทึกใบเบิก":
             )
 
             if submit_entries:
-                entries = []
+                completed_entries = []
                 errors = []
 
-                for row_number, (_, row) in enumerate(
-                    entry_df.iterrows(),
-                    start=1,
-                ):
-                    raw_job = str(row.get("เลขที่ JOB", "") or "").strip()
-                    department = str(row.get("แผนก", "") or "").strip()
-                    pd_zone = str(
-                        row.get("PD / ไลน์ผลิต", "") or ""
-                    ).strip()
-                    product_name = str(
-                        row.get("ชื่อสินค้า", "") or ""
-                    ).strip()
-                    raw_quantity = row.get("จำนวน", 1)
+                for index, entry in enumerate(entries, start=1):
+                    raw_job = str(entry["job_number"] or "").strip()
+                    department = str(entry["department"] or "").strip()
+                    pd_zone = str(entry["pd_zone"] or "").strip()
+                    product_name = str(entry["product_name"] or "").strip()
 
-                    if not any([raw_job, department, product_name]):
+                    if not any([raw_job, product_name]):
                         continue
 
                     job_number = normalize_job_number(raw_job)
 
                     if not job_number:
-                        errors.append(f"แถว {row_number}: กรุณากรอกเลข JOB")
+                        errors.append(f"แถว {index}: กรุณากรอกเลข JOB")
                         continue
                     if not department:
-                        errors.append(f"{job_number}: กรุณากรอกแผนก")
+                        errors.append(f"{job_number}: กรุณาเลือกหรือพิมพ์แผนก")
                         continue
                     if pd_zone not in PD_OPTIONS:
                         errors.append(
-                            f"{job_number}: กรุณาเลือก PD ตั้งแต่ L1 ถึง L10"
+                            f"{job_number}: กรุณาเลือก PD/ไลน์ L1–L10"
                         )
                         continue
                     if not product_name:
                         errors.append(f"{job_number}: กรุณากรอกชื่อสินค้า")
                         continue
 
-                    try:
-                        quantity = int(raw_quantity)
-                        if quantity < 1:
-                            raise ValueError
-                    except (TypeError, ValueError):
-                        errors.append(
-                            f"{job_number}: จำนวนต้องเป็นจำนวนเต็มตั้งแต่ 1 ขึ้นไป"
-                        )
-                        continue
-
-                    entries.append(
+                    completed_entries.append(
                         {
                             "job_number": job_number,
                             "department_option": (
@@ -1077,7 +1068,7 @@ if page == "📝 บันทึกใบเบิก":
                             "department": department,
                             "pd_zone": pd_zone,
                             "product_name": product_name,
-                            "quantity": quantity,
+                            "quantity": int(entry["quantity"]),
                         }
                     )
 
@@ -1088,28 +1079,28 @@ if page == "📝 บันทึกใบเบิก":
                 )
                 batch_numbers = [
                     entry["job_number"].casefold()
-                    for entry in entries
+                    for entry in completed_entries
                 ]
 
                 duplicates_in_batch = {
-                    number
-                    for number in batch_numbers
-                    if batch_numbers.count(number) > 1
+                    value
+                    for value in batch_numbers
+                    if batch_numbers.count(value) > 1
                 }
                 duplicates_existing = [
                     entry["job_number"]
-                    for entry in entries
+                    for entry in completed_entries
                     if entry["job_number"].casefold() in existing_numbers
                 ]
 
                 if errors:
                     for error in errors:
                         st.error(error)
-                elif not entries:
+                elif not completed_entries:
                     st.warning("กรุณากรอก JOB อย่างน้อยหนึ่งรายการ")
                 elif duplicates_in_batch:
                     st.error(
-                        "พบเลข JOB ซ้ำในข้อมูลที่กรอก: "
+                        "พบเลข JOB ซ้ำในรายการที่กรอก: "
                         + ", ".join(sorted(duplicates_in_batch))
                     )
                 elif duplicates_existing:
@@ -1119,12 +1110,14 @@ if page == "📝 บันทึกใบเบิก":
                     )
                 else:
                     received_at = timestamp_now()
-                    for entry in entries:
+                    for entry in completed_entries:
                         entry["received_at"] = received_at
 
                     try:
-                        insert_records(entries)
-                        st.success(f"บันทึกใบเบิกแล้ว {len(entries)} JOB")
+                        insert_records(completed_entries)
+                        st.success(
+                            f"บันทึกใบเบิกแล้ว {len(completed_entries)} JOB"
+                        )
                         st.rerun()
                     except sqlite3.IntegrityError:
                         st.error(
@@ -1252,8 +1245,8 @@ elif page == "📊 Dashboard สรุปผล":
                 height=340,
                 coloraxis_showscale=False,
                 margin=dict(l=10, r=10, t=55, b=10),
-                paper_bgcolor="white",
-                plot_bgcolor="white",
+                paper_bgcolor="#FFFFFF",
+                plot_bgcolor="#FFFFFF",
             )
             st.plotly_chart(figure, use_container_width=True)
 
@@ -1284,8 +1277,8 @@ elif page == "📊 Dashboard สรุปผล":
                 template="plotly_white",
                 height=340,
                 margin=dict(l=10, r=10, t=55, b=10),
-                paper_bgcolor="white",
-                plot_bgcolor="white",
+                paper_bgcolor="#FFFFFF",
+                plot_bgcolor="#FFFFFF",
             )
             st.plotly_chart(figure, use_container_width=True)
 
@@ -1293,7 +1286,6 @@ elif page == "📊 Dashboard สรุปผล":
         late_data["ช่วงเวลารับ"] = late_data["received_at"].apply(
             lambda value: "ใบเบิกเย็น" if is_late(value) else "ก่อน Cut-off"
         )
-
         department_summary = (
             late_data.groupby(["department", "ช่วงเวลารับ"])
             .size()
@@ -1301,6 +1293,7 @@ elif page == "📊 Dashboard สรุปผล":
         )
 
         st.markdown("#### 🔴 ใบเบิกเย็นแยกตามแผนก")
+
         figure = px.bar(
             department_summary,
             x="department",
@@ -1317,8 +1310,8 @@ elif page == "📊 Dashboard สรุปผล":
             height=320,
             margin=dict(l=10, r=10, t=25, b=10),
             xaxis_title="แผนก",
-            paper_bgcolor="white",
-            plot_bgcolor="white",
+            paper_bgcolor="#FFFFFF",
+            plot_bgcolor="#FFFFFF",
         )
         st.plotly_chart(figure, use_container_width=True)
 
@@ -1336,11 +1329,17 @@ elif page == "📊 Dashboard สรุปผล":
 
             if processing is not None:
                 stage_rows.append(
-                    {"ขั้นตอน": "รับเรื่องถึงจัดเสร็จ", "นาที": processing}
+                    {
+                        "ขั้นตอน": "รับเรื่องถึงจัดเสร็จ",
+                        "นาที": processing,
+                    }
                 )
             if waiting is not None:
                 stage_rows.append(
-                    {"ขั้นตอน": "จัดเสร็จถึง PD มารับ", "นาที": waiting}
+                    {
+                        "ขั้นตอน": "จัดเสร็จถึง PD มารับ",
+                        "นาที": waiting,
+                    }
                 )
 
         if stage_rows:
@@ -1366,14 +1365,14 @@ elif page == "📊 Dashboard สรุปผล":
                 height=300,
                 showlegend=False,
                 margin=dict(l=10, r=10, t=50, b=10),
-                paper_bgcolor="white",
-                plot_bgcolor="white",
+                paper_bgcolor="#FFFFFF",
+                plot_bgcolor="#FFFFFF",
             )
             st.plotly_chart(figure, use_container_width=True)
 
 
 # ---------------------------------------------------------------------
-# Page 3: Workflow and record management
+# Page 3: Workflow, edit, cancel and delete
 # ---------------------------------------------------------------------
 
 elif page == "✏️ จัดการ/อัปเดตสถานะ":
@@ -1395,7 +1394,7 @@ elif page == "✏️ จัดการ/อัปเดตสถานะ":
         st.markdown("#### ⏱️ Hybrid Timestamp")
         st.caption(
             f"เวลาไทยปัจจุบัน: {bangkok_now():%Y-%m-%d %H:%M:%S} "
-            "• ใช้ปุ่ม Auto Timestamp หรือพิมพ์แก้ไขเวลาเองได้"
+            "• กด Auto Timestamp หรือแก้เวลาเองได้"
         )
 
         picked_key = f"picked_timestamp_{selected_id}"
@@ -1429,7 +1428,6 @@ elif page == "✏️ จัดการ/อัปเดตสถานะ":
                 st.session_state[handover_key] = timestamp_now()
 
         picked_col, handover_col = st.columns(2)
-
         picked_input = picked_col.text_input(
             "เวลาจัดสินค้าเสร็จ",
             key=picked_key,
@@ -1507,14 +1505,14 @@ elif page == "✏️ จัดการ/อัปเดตสถานะ":
                 )
                 st.rerun()
 
-        metric1, metric2 = st.columns(2)
-        metric1.metric(
+        metric_col1, metric_col2 = st.columns(2)
+        metric_col1.metric(
             "⏱️ Processing Time",
             duration_label(
                 duration_minutes(selected["received_at"], selected["picked_at"])
             ),
         )
-        metric2.metric(
+        metric_col2.metric(
             "🕒 Waiting Time",
             duration_label(
                 duration_minutes(selected["picked_at"], selected["handover_at"])
@@ -1536,10 +1534,16 @@ elif page == "✏️ จัดการ/อัปเดตสถานะ":
                     "เลขที่ JOB",
                     value=str(selected["job_number"]),
                 )
-                edited_department = col2.text_input(
+                edited_department = col2.selectbox(
                     "แผนก",
-                    value=current_department,
-                    help="พิมพ์ชื่อแผนกมาตรฐานหรือชื่อแผนกใหม่",
+                    STANDARD_DEPARTMENTS,
+                    index=(
+                        STANDARD_DEPARTMENTS.index(current_department)
+                        if current_department in STANDARD_DEPARTMENTS
+                        else 0
+                    ),
+                    accept_new_options=True,
+                    help="เลือกแผนกมาตรฐานหรือพิมพ์ชื่อใหม่",
                 )
                 edited_product = col1.text_input(
                     "ชื่อสินค้า",
@@ -1591,7 +1595,7 @@ elif page == "✏️ จัดการ/อัปเดตสถานะ":
 
                     if not normalized_job:
                         st.error("กรุณากรอกเลข JOB")
-                    elif not edited_department.strip():
+                    elif not str(edited_department).strip():
                         st.error("กรุณากรอกแผนก")
                     elif not edited_product.strip():
                         st.error("กรุณากรอกชื่อสินค้า")
@@ -1603,14 +1607,15 @@ elif page == "✏️ จัดการ/อัปเดตสถานะ":
                     ):
                         st.error("สถานะยกเลิกต้องระบุผู้สั่งและสาเหตุ")
                     else:
+                        department_value = str(edited_department).strip()
                         values = {
                             "job_number": normalized_job,
                             "department_option": (
-                                edited_department.strip()
-                                if edited_department.strip() in STANDARD_DEPARTMENTS
+                                department_value
+                                if department_value in STANDARD_DEPARTMENTS
                                 else "อื่นๆ"
                             ),
-                            "department": edited_department.strip(),
+                            "department": department_value,
                             "pd_zone": edited_pd,
                             "product_name": edited_product.strip(),
                             "quantity": int(edited_quantity),
@@ -1662,10 +1667,15 @@ elif page == "✏️ จัดการ/อัปเดตสถานะ":
                     if not cancel_by.strip() or not cancel_reason.strip():
                         st.error("กรุณาระบุผู้สั่งยกเลิกและสาเหตุ")
                     else:
+                        department_value = str(selected["department"] or "")
                         cancel_values = {
                             "job_number": selected["job_number"],
-                            "department_option": "อื่นๆ",
-                            "department": selected["department"],
+                            "department_option": (
+                                department_value
+                                if department_value in STANDARD_DEPARTMENTS
+                                else "อื่นๆ"
+                            ),
+                            "department": department_value,
                             "pd_zone": selected["pd_zone"],
                             "product_name": selected["product_name"],
                             "quantity": int(selected["quantity"]),
@@ -1684,7 +1694,7 @@ elif page == "✏️ จัดการ/อัปเดตสถานะ":
 
         with delete_col:
             with st.container(border=True):
-                st.caption("ลบรายการจะนำข้อมูลออกจากระบบถาวร")
+                st.caption("การลบจะนำรายการออกจากระบบถาวร")
                 confirm_delete = st.checkbox(
                     "ยืนยันว่าต้องการลบ JOB นี้ถาวร",
                     key=f"confirm_delete_{selected_id}",
