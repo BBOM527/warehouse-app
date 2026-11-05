@@ -25,10 +25,10 @@ LOGIN_USERNAME = "lNWBOOM"
 LOGIN_PASSWORD = "Boomkub555"
 DISPLAY_NAME = "Admin"
 
-# รายการแผนกมาตรฐานเรียงตามลำดับที่ใช้บ่อย
+# แผนกที่แสดงในฟอร์ม เรียงตามลำดับการใช้งาน
 DEPARTMENTS = [
     "PD",
-    "ธุรการPD",
+    "แอดมินPD",
     "จัดซื้อ",
     "วางแผน",
     "RD",
@@ -156,14 +156,6 @@ st.markdown(
         border-radius:16px; padding:18px 20px;
         box-shadow:0 10px 30px rgba(0,0,0,.05); margin-bottom:1rem;
     }
-    .status-pill {
-        display:inline-block; border-radius:999px; padding:3px 10px;
-        font-size:.82rem; font-weight:500; white-space:nowrap;
-    }
-    .pill-open { color:#92400e; background:#fef3c7; }
-    .pill-ready { color:#075985; background:#e0f2fe; }
-    .pill-done { color:#065f46; background:#d1fae5; }
-    .pill-cancel { color:#991b1b; background:#fee2e2; }
     .login-wrap {
         max-width:480px; margin:8vh auto 0; padding:2rem;
         background:#fff; border:1px solid var(--line); border-radius:20px;
@@ -175,7 +167,7 @@ st.markdown(
 )
 
 
-# ── Utility และฐานข้อมูล ──────────────────────────────────────────────────────
+# ── เวลาและฐานข้อมูล ──────────────────────────────────────────────────────────
 def now_bangkok():
     return datetime.now(BANGKOK).replace(microsecond=0)
 
@@ -286,6 +278,12 @@ def load_data():
 
 
 def insert_requisition(job_number, department, line, item_name, quantity, received_at):
+    # บังคับมีไลน์เมื่อแผนกเป็น PD และไม่บันทึกไลน์ให้แผนกอื่น
+    if department == "PD" and line not in PRODUCTION_LINES:
+        return False, f"กรุณาเลือกไลน์ผลิต L1-L10 สำหรับ JOB {job_number}"
+    if department != "PD":
+        line = ""
+
     with sqlite3.connect(DB_PATH) as conn:
         exists = conn.execute(
             "SELECT 1 FROM requisitions WHERE job_number=? AND status!='ยกเลิก' LIMIT 1",
@@ -314,6 +312,11 @@ def update_requisition(
     record_id, department, line, item_name, quantity,
     received_at, picked_at, handover_at,
 ):
+    if department == "PD" and line not in PRODUCTION_LINES:
+        raise ValueError("แผนก PD ต้องเลือกไลน์ผลิต L1-L10")
+    if department != "PD":
+        line = ""
+
     status = "รับของแล้ว" if handover_at else (
         "จัดเสร็จ / รอ PD" if picked_at else "กำลังจัด"
     )
@@ -351,6 +354,7 @@ def cancel_requisition(record_id, cancelled_by, reason):
         conn.commit()
 
 
+# ── ส่วนประกอบ UI ─────────────────────────────────────────────────────────────
 def show_live_clock():
     components.html(
         """
@@ -453,13 +457,13 @@ def filter_data(df, key_prefix):
         start_date = today - timedelta(days=today.weekday())
         end_date = today
     elif mode == "เลือกช่วงวันที่":
-        chosen = st.date_input(
+        selected_range = st.date_input(
             "วันที่เริ่มต้นและสิ้นสุด",
             value=(today - timedelta(days=6), today),
             key=f"{key_prefix}_range",
         )
-        if isinstance(chosen, (tuple, list)) and len(chosen) == 2:
-            start_date, end_date = chosen
+        if isinstance(selected_range, (tuple, list)) and len(selected_range) == 2:
+            start_date, end_date = selected_range
 
     result = df.copy()
     if start_date and end_date and not result.empty:
@@ -550,24 +554,7 @@ def excel_bytes(df):
     return buffer.getvalue()
 
 
-def department_field(key, current_department=None):
-    """ช่องแผนกเดียว รองรับตัวเลือกมาตรฐานและข้อความที่พิมพ์เพิ่ม"""
-    options = DEPARTMENTS.copy()
-    if current_department and current_department not in options:
-        options.insert(0, current_department)
-
-    index = options.index(current_department) if current_department in options else 0
-    department = st.selectbox(
-        "แผนก",
-        options,
-        index=index,
-        key=key,
-        accept_new_options=True,
-    )
-    return str(department).strip()
-
-
-# ── ตรวจสอบการเข้าสู่ระบบ ────────────────────────────────────────────────────
+# ── Login gate และ Sidebar ─────────────────────────────────────────────────────
 init_db()
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
@@ -576,14 +563,13 @@ if not st.session_state["authenticated"]:
     render_login()
     st.stop()
 
-
-# ── เมนูและผู้ใช้งาน ──────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 📦 Warehouse Flow")
     st.caption("DOCUMENT TRACKING")
     st.markdown("---")
     st.markdown(f"👤 **{DISPLAY_NAME}**")
     st.caption("ผู้ดูแลระบบ")
+
     page = st.radio(
         "เมนูหลัก",
         [
@@ -594,6 +580,7 @@ with st.sidebar:
         ],
         label_visibility="collapsed",
     )
+
     st.markdown("---")
     if st.button("ออกจากระบบ", use_container_width=True):
         st.session_state["authenticated"] = False
@@ -604,7 +591,7 @@ show_live_clock()
 data = load_data()
 
 
-# ── บันทึกใบเบิกหลาย JOB ──────────────────────────────────────────────────────
+# ── บันทึกหลาย JOB พร้อมกัน ──────────────────────────────────────────────────
 if page == "📝 บันทึกใบเบิก":
     heading("บันทึกใบเบิก", "รับงานระดับ JOB พร้อมประทับเวลาจริงจากคลังสินค้า")
     st.caption(
@@ -646,17 +633,14 @@ if page == "📝 บันทึกใบเบิก":
                 key=f"bulk_job_{index}",
                 placeholder="เช่น JOB-6901",
             )
+            department = cols[1].selectbox(
+                "แผนก",
+                DEPARTMENTS,
+                key=f"bulk_department_{index}",
+                accept_new_options=True,
+            )
 
-            # เลือกแผนกหรือพิมพ์ชื่อใหม่ได้ในช่องแผนกเดียว
-            with cols[1]:
-                department = st.selectbox(
-                    "แผนก",
-                    DEPARTMENTS,
-                    key=f"bulk_department_{index}",
-                    accept_new_options=True,
-                )
-
-            # แสดงไลน์ผลิตเฉพาะแผนก PD เท่านั้น
+            # เฉพาะแผนก PD ที่ต้องเลือกไลน์ผลิต
             if department == "PD":
                 line = cols[2].selectbox(
                     "ไลน์ผลิต",
@@ -667,7 +651,7 @@ if page == "📝 บันทึกใบเบิก":
                 line = ""
                 cols[2].markdown(
                     "<div style='padding-top:2rem;color:#94a3b8'>"
-                    "ไลน์ผลิตไม่เกี่ยวข้อง</div>",
+                    "ไม่ต้องระบุไลน์ผลิต</div>",
                     unsafe_allow_html=True,
                 )
 
@@ -745,14 +729,10 @@ elif page == "📊 Dashboard":
 
         cards = st.columns(4)
         cards[0].metric(
-            "ใบเบิกในช่วงที่เลือก",
-            f"{total:,}",
-            f"วันนี้ {today_count:,} JOB",
+            "ใบเบิกในช่วงที่เลือก", f"{total:,}", f"วันนี้ {today_count:,} JOB"
         )
         cards[1].metric(
-            "ใบเบิกเย็น",
-            f"{late_count / total * 100:.1f}%",
-            f"{late_count:,} JOB",
+            "ใบเบิกเย็น", f"{late_count / total * 100:.1f}%", f"{late_count:,} JOB"
         )
         cards[2].metric("เวลาจัดเฉลี่ย", format_duration(avg_processing))
         bottleneck = "รอจัด" if pending_count else (
@@ -821,7 +801,7 @@ elif page == "📊 Dashboard":
         show_table(filtered, "dashboard_table")
 
 
-# ── จัดการสถานะและรายละเอียด JOB ─────────────────────────────────────────────
+# ── จัดการสถานะและรายละเอียด ─────────────────────────────────────────────────
 elif page == "✏️ จัดการ / อัปเดตสถานะ":
     heading("จัดการและอัปเดตสถานะ", "บันทึกเวลาจัดเสร็จและเวลาที่ PD รับสินค้า")
     active = data[data["status"] != "ยกเลิก"] if not data.empty else data
@@ -972,7 +952,7 @@ elif page == "✏️ จัดการ / อัปเดตสถานะ":
                 accept_new_options=True,
             )
 
-            # เงื่อนไขสำคัญ: ไลน์ผลิตแสดงเฉพาะเมื่อแผนกเป็น PD เท่านั้น
+            # เฉพาะ PD เท่านั้นที่แสดงและต้องเลือกไลน์ผลิต
             edit_line = ""
             if edit_department == "PD":
                 current_line = str(record["production_line"] or "L1")
@@ -1001,18 +981,21 @@ elif page == "✏️ จัดการ / อัปเดตสถานะ":
             )
 
             if st.button("บันทึกการแก้ไขรายละเอียด", key=f"save_edit_{selected_id}"):
-                update_requisition(
-                    int(selected_id),
-                    str(edit_department).strip(),
-                    edit_line if edit_department == "PD" else "",
-                    edit_item,
-                    edit_quantity if edit_quantity > 0 else None,
-                    received_at,
-                    picked_at,
-                    handover_at,
-                )
-                st.success("อัปเดตรายละเอียดแล้ว")
-                st.rerun()
+                try:
+                    update_requisition(
+                        int(selected_id),
+                        str(edit_department).strip(),
+                        edit_line if edit_department == "PD" else "",
+                        edit_item,
+                        edit_quantity if edit_quantity > 0 else None,
+                        received_at,
+                        picked_at,
+                        handover_at,
+                    )
+                    st.success("อัปเดตรายละเอียดแล้ว")
+                    st.rerun()
+                except ValueError as error:
+                    st.error(str(error))
 
         with st.expander("🔴 ยกเลิก JOB"):
             cancel_by = st.text_input(
