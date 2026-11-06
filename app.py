@@ -7,6 +7,8 @@ import plotly.express as px
 import pytz
 import streamlit as st
 import streamlit.components.v1 as components
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
 
 
 # ── ตั้งค่าระบบ ────────────────────────────────────────────────────────────────
@@ -48,97 +50,71 @@ st.markdown(
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap');
 
-    :root {
-        --ink: #172033;
-        --muted: #64748b;
-        --line: #e2e8f0;
-        --canvas: #f8fafc;
-    }
+    :root { --ink:#172033; --muted:#64748b; --line:#e2e8f0; --canvas:#f8fafc; }
     html, body, [class*="css"], [data-testid="stAppViewContainer"] {
-        font-family: 'Kanit', sans-serif;
-        color: var(--ink);
+        font-family:'Kanit',sans-serif; color:var(--ink);
     }
     [data-testid="stAppViewContainer"] {
-        background:
-            radial-gradient(ellipse at 4% 0%, rgba(14,165,233,.07), transparent 32%),
-            radial-gradient(ellipse at 96% 5%, rgba(16,185,129,.07), transparent 28%),
-            var(--canvas);
+        background:radial-gradient(ellipse at 4% 0%,rgba(14,165,233,.07),transparent 32%),
+        radial-gradient(ellipse at 96% 5%,rgba(16,185,129,.07),transparent 28%),var(--canvas);
     }
-    [data-testid="stHeader"] { background: rgba(248,250,252,.78); }
+    [data-testid="stHeader"] { background:rgba(248,250,252,.78); }
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #101827 0%, #172033 100%);
-        border-right: 1px solid rgba(255,255,255,.08);
+        background:linear-gradient(180deg,#101827 0%,#172033 100%);
+        border-right:1px solid rgba(255,255,255,.08);
     }
-    [data-testid="stSidebar"] * { color: #e2e8f0; }
-
+    [data-testid="stSidebar"] * { color:#e2e8f0; }
     [data-testid="stMetric"] {
-        background: #fff;
-        border: 1px solid var(--line);
-        border-radius: 16px;
-        padding: 18px 20px;
-        box-shadow: 0 10px 30px rgba(0,0,0,.05);
+        background:#fff; border:1px solid var(--line); border-radius:16px;
+        padding:18px 20px; box-shadow:0 10px 30px rgba(0,0,0,.05);
     }
-    [data-testid="stMetricLabel"] { color: var(--muted); }
-    [data-testid="stMetricValue"] { color: var(--ink); font-weight: 600; }
-
+    [data-testid="stMetricLabel"] { color:var(--muted); }
+    [data-testid="stMetricValue"] { color:var(--ink); font-weight:600; }
     [data-testid="stForm"], [data-testid="stExpander"], [data-testid="stDataFrame"] {
-        border: 1px solid var(--line);
-        border-radius: 16px;
-        box-shadow: 0 10px 30px rgba(0,0,0,.05);
-        overflow: hidden;
-        background: #fff;
+        border:1px solid var(--line); border-radius:16px;
+        box-shadow:0 10px 30px rgba(0,0,0,.05); overflow:hidden; background:#fff;
     }
-    [data-testid="stTextInput"] input,
-    [data-testid="stNumberInput"] input,
-    [data-testid="stDateInput"] input,
-    [data-testid="stTimeInput"] input,
-    [data-testid="stSelectbox"] [data-baseweb="select"] > div,
-    [data-testid="stTextArea"] textarea { border-radius: 12px; }
-
-    [data-testid="stButton"] button,
-    [data-testid="stFormSubmitButton"] button,
+    [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
+    [data-testid="stDateInput"] input, [data-testid="stTimeInput"] input,
+    [data-testid="stSelectbox"] [data-baseweb="select"]>div,
+    [data-testid="stTextArea"] textarea { border-radius:12px; }
+    [data-testid="stButton"] button, [data-testid="stFormSubmitButton"] button,
     [data-testid="stDownloadButton"] button {
-        border-radius: 12px;
-        font-family: 'Kanit', sans-serif;
-        font-weight: 500;
-        transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
+        border-radius:12px; font-family:'Kanit',sans-serif; font-weight:500;
+        transition:transform .18s ease,box-shadow .18s ease,filter .18s ease;
     }
     [data-testid="stButton"] button[kind="primary"],
     [data-testid="stFormSubmitButton"] button {
-        background: linear-gradient(115deg, #059669, #0284c7);
-        color: white;
-        border: 0;
-        box-shadow: 0 7px 18px rgba(2,132,199,.2);
+        background:linear-gradient(115deg,#059669,#0284c7); color:#fff;
+        border:0; box-shadow:0 7px 18px rgba(2,132,199,.2);
     }
     [data-testid="stButton"] button:hover,
     [data-testid="stFormSubmitButton"] button:hover,
     [data-testid="stDownloadButton"] button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 10px 22px rgba(15,23,42,.12);
-        filter: brightness(1.03);
+        transform:translateY(-2px); box-shadow:0 10px 22px rgba(15,23,42,.12);
+        filter:brightness(1.03);
     }
-
-    .page-heading { margin: .25rem 0 1.2rem; }
-    .page-heading h1 { margin: 0; font-weight: 600; letter-spacing: -.02em; }
-    .eyebrow { color: #0284c7; letter-spacing: .12em; font-size: .76rem; font-weight: 600; }
-    .subtle { color: var(--muted); }
+    .page-heading { margin:.25rem 0 1.2rem; }
+    .page-heading h1 { margin:0; font-weight:600; letter-spacing:-.02em; }
+    .eyebrow { color:#0284c7; letter-spacing:.12em; font-size:.76rem; font-weight:600; }
+    .subtle { color:var(--muted); }
     .clock-card {
-        display: flex; justify-content: space-between; align-items: center; gap: 1rem;
-        background: rgba(255,255,255,.88); border: 1px solid var(--line);
-        border-radius: 16px; padding: 12px 18px; margin-bottom: 1.2rem;
-        box-shadow: 0 10px 30px rgba(0,0,0,.05);
+        display:flex; justify-content:space-between; align-items:center; gap:1rem;
+        background:rgba(255,255,255,.88); border:1px solid var(--line);
+        border-radius:16px; padding:12px 18px; margin-bottom:1.2rem;
+        box-shadow:0 10px 30px rgba(0,0,0,.05);
     }
-    .clock-time { font-size: 1.15rem; font-weight: 600; color: #0f766e; }
-    .clock-date { color: var(--muted); font-size: .9rem; }
+    .clock-time { font-size:1.15rem; font-weight:600; color:#0f766e; }
+    .clock-date { color:var(--muted); font-size:.9rem; }
     .section-card {
-        background: #fff; border: 1px solid var(--line); border-radius: 16px;
-        padding: 18px 20px; box-shadow: 0 10px 30px rgba(0,0,0,.05);
-        margin-bottom: 1rem;
+        background:#fff; border:1px solid var(--line); border-radius:16px;
+        padding:18px 20px; box-shadow:0 10px 30px rgba(0,0,0,.05);
+        margin-bottom:1rem;
     }
     .login-wrap {
-        max-width: 480px; margin: 8vh auto 0; padding: 2rem; background: #fff;
-        border: 1px solid var(--line); border-radius: 20px;
-        box-shadow: 0 20px 50px rgba(15,23,42,.09);
+        max-width:480px; margin:8vh auto 0; padding:2rem; background:#fff;
+        border:1px solid var(--line); border-radius:20px;
+        box-shadow:0 20px 50px rgba(15,23,42,.09);
     }
     </style>
     """,
@@ -146,7 +122,7 @@ st.markdown(
 )
 
 
-# ── เวลาและ SQLite schema migration ────────────────────────────────────────────
+# ── เวลาและฐานข้อมูล ──────────────────────────────────────────────────────────
 def now_bangkok():
     return datetime.now(BANGKOK).replace(microsecond=0)
 
@@ -156,16 +132,14 @@ def as_bangkok(value):
         return None
     try:
         parsed = pd.Timestamp(value).to_pydatetime()
-        if parsed.tzinfo is None:
-            return BANGKOK.localize(parsed)
-        return parsed.astimezone(BANGKOK)
+        return BANGKOK.localize(parsed) if parsed.tzinfo is None else parsed.astimezone(BANGKOK)
     except (TypeError, ValueError, OverflowError):
         return None
 
 
 def stamp(value):
-    local_value = as_bangkok(value)
-    return local_value.isoformat() if local_value else None
+    parsed = as_bangkok(value)
+    return parsed.isoformat() if parsed else None
 
 
 def parse_local_datetime(date_value, time_value):
@@ -194,7 +168,7 @@ def format_duration(value):
 
 
 def init_db():
-    """สร้างตารางและเพิ่มคอลัมน์ที่ขาด โดยพยายามรักษาข้อมูลจาก schema เก่า."""
+    """สร้างตารางและเพิ่มคอลัมน์ที่ขาด พร้อมย้ายข้อมูลจาก schema เก่า."""
     definitions = {
         "id": "INTEGER",
         "job_number": "TEXT NOT NULL DEFAULT ''",
@@ -252,13 +226,12 @@ def init_db():
                     f'ALTER TABLE requisitions ADD COLUMN "{name}" {definition}'
                 )
 
-        # อ่านชื่อคอลัมน์อีกครั้งหลัง ALTER TABLE
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(requisitions)").fetchall()
         }
 
-        # ย้ายข้อมูลจากชื่อคอลัมน์เก่า ก่อนเติมค่าเริ่มต้นให้ช่องว่าง
-        legacy_mappings = {
+        # โอนค่าจากชื่อคอลัมน์เดิมก่อนเติมค่าเริ่มต้น
+        aliases = {
             "job_number": ("job_id", "job_no", "requisition_no"),
             "department": ("dept",),
             "line": ("production_line",),
@@ -268,19 +241,17 @@ def init_db():
             "status": ("current_status",),
             "item_name": ("item", "product_name"),
         }
-        for target, sources in legacy_mappings.items():
-            for source in sources:
+        for target, source_names in aliases.items():
+            for source in source_names:
                 if target in columns and source in columns and source != target:
                     conn.execute(
                         f"""
-                        UPDATE requisitions
-                        SET "{target}" = "{source}"
-                        WHERE ("{target}" IS NULL OR "{target}" = '')
-                          AND "{source}" IS NOT NULL AND "{source}" != ''
+                        UPDATE requisitions SET "{target}"="{source}"
+                        WHERE ("{target}" IS NULL OR "{target}"='')
+                          AND "{source}" IS NOT NULL AND "{source}"!=''
                         """
                     )
 
-        # ซิงก์คอลัมน์ alias สำหรับข้อมูลเดิม
         conn.execute(
             """
             UPDATE requisitions SET line=production_line
@@ -310,12 +281,10 @@ def init_db():
             """
         )
 
-        # เติมค่าจำเป็นสำหรับแถวเก่าที่ไม่มีข้อมูล
         conn.execute("UPDATE requisitions SET id=rowid WHERE id IS NULL")
         conn.execute(
             """
-            UPDATE requisitions
-            SET job_number='LEGACY-' || rowid
+            UPDATE requisitions SET job_number='LEGACY-' || rowid
             WHERE job_number IS NULL OR job_number=''
             """
         )
@@ -353,8 +322,8 @@ def load_data():
 
     if not df.empty:
         df["line"] = df["line"].fillna("")
-        empty_line = df["line"].eq("")
-        df.loc[empty_line, "line"] = df.loc[empty_line, "production_line"].fillna("")
+        no_line = df["line"].eq("")
+        df.loc[no_line, "line"] = df.loc[no_line, "production_line"].fillna("")
         df["picked_at"] = df["picked_at"].where(
             df["picked_at"].notna() & df["picked_at"].ne(""),
             df["completed_at"],
@@ -386,7 +355,7 @@ def load_data():
 
 
 def insert_requisition(job_number, department, line, item_name, quantity, received_at):
-    # เฉพาะแผนก PD เท่านั้นที่เก็บค่า L1-L10 ได้
+    # เฉพาะแผนก PD เท่านั้นที่บันทึกไลน์ L1-L10 ได้
     if department == "PD":
         if line not in PRODUCTION_LINES:
             return False, f"กรุณาเลือกไลน์ผลิต L1-L10 สำหรับ JOB {job_number}"
@@ -476,8 +445,83 @@ def cancel_requisition(record_id, cancelled_by, reason):
         conn.commit()
 
 
-# ── Callback สำหรับลงเวลา: ทำงานก่อน Streamlit สร้าง widgets ในรอบใหม่ ─────────
+# ── Excel export: เลือกเฉพาะข้อมูลสำคัญและจัดความกว้างคอลัมน์ ────────────────
+def make_excel(df):
+    export = pd.DataFrame(index=df.index)
+
+    export["เลขที่ Job"] = df["job_number"].fillna("").astype(str)
+    export["วันเวลาที่เบิก"] = df["received_at"].apply(
+        lambda value: as_bangkok(value).strftime("%d/%m/%Y %H:%M:%S")
+        if as_bangkok(value) else ""
+    )
+    export["แผนกที่เบิก"] = df["department"].fillna("").astype(str)
+    export["ไลน์ผลิต"] = df["line"].fillna("").astype(str)
+    export["รายการสินค้า"] = df["item_name"].fillna("").astype(str)
+    export["จำนวน"] = df["quantity"].where(df["quantity"].notna(), "")
+
+    export["สถานะปัจจุบัน"] = df.apply(
+        lambda row: job_status(row), axis=1
+    )
+    export["เวลาจัดเสร็จ"] = df["picked_at"].apply(
+        lambda value: as_bangkok(value).strftime("%d/%m/%Y %H:%M:%S")
+        if as_bangkok(value) else ""
+    )
+    export["เวลา PD มารับ"] = df["handover_at"].apply(
+        lambda value: as_bangkok(value).strftime("%d/%m/%Y %H:%M:%S")
+        if as_bangkok(value) else ""
+    )
+    export["ระยะเวลาจัดสินค้า (นาที)"] = df["processing_minutes"].apply(
+        lambda value: "" if pd.isna(value) else round(float(value), 1)
+    )
+    export["ระยะเวลารอรับสินค้า (นาที)"] = df["waiting_minutes"].apply(
+        lambda value: "" if pd.isna(value) else round(float(value), 1)
+    )
+
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        export.to_excel(writer, index=False, sheet_name="รายงานการเบิก")
+
+        worksheet = writer.sheets["รายงานการเบิก"]
+        worksheet.freeze_panes = "A2"
+        worksheet.auto_filter.ref = worksheet.dimensions
+        worksheet.row_dimensions[1].height = 30
+
+        header_fill = PatternFill("solid", fgColor="123047")
+        header_font = Font(name="Aptos", bold=True, color="FFFFFF", size=11)
+        body_font = Font(name="Aptos", size=10)
+
+        for cell in worksheet[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(
+                horizontal="center",
+                vertical="center",
+                wrap_text=True,
+            )
+
+        # ปรับความกว้างคอลัมน์ตามความยาวข้อมูล โดยจำกัดความกว้างสูงสุด
+        for column_cells in worksheet.columns:
+            column_letter = get_column_letter(column_cells[0].column)
+            max_length = 0
+            for cell in column_cells:
+                cell.font = header_font if cell.row == 1 else body_font
+                cell.alignment = Alignment(
+                    vertical="center",
+                    wrap_text=(cell.row == 1),
+                )
+                value = "" if cell.value is None else str(cell.value)
+                max_length = max(max_length, len(value))
+            worksheet.column_dimensions[column_letter].width = min(
+                max(max_length + 3, 12), 42
+            )
+
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+# ── Callback สำหรับปุ่มลงเวลา ─────────────────────────────────────────────────
 def set_timestamp(date_key, time_key, enabled_key):
+    """Callback ทำงานก่อนวาด widgets รอบใหม่ จึงตั้งค่า widget state ได้ปลอดภัย."""
     current = now_bangkok()
     st.session_state[date_key] = current.date()
     st.session_state[time_key] = current.time().replace(microsecond=0)
@@ -557,7 +601,6 @@ def render_login():
             submitted = st.form_submit_button(
                 "เข้าสู่ระบบ", type="primary", use_container_width=True
             )
-
         if submitted:
             if username == LOGIN_USERNAME and password == LOGIN_PASSWORD:
                 st.session_state["authenticated"] = True
@@ -583,7 +626,6 @@ def filter_data(df, key_prefix):
 
     start_date = end_date = None
     today = now_bangkok().date()
-
     if mode == "วันนี้":
         start_date = end_date = today
     elif mode == "สัปดาห์นี้":
@@ -667,25 +709,8 @@ def show_table(df, key):
     )
 
 
-def make_excel(df):
-    export = df.copy()
-    if not export.empty:
-        for column in (
-            "received_at", "started_at", "picked_at", "completed_at",
-            "handover_at", "cancelled_at", "updated_at",
-        ):
-            if column in export.columns:
-                export[column] = export[column].astype(str).replace("NaT", "")
-
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        export.to_excel(writer, index=False, sheet_name="Warehouse Jobs")
-    buffer.seek(0)
-    return buffer.getvalue()
-
-
 def render_plotly_or_info(frame, required_columns, chart_builder, chart_key):
-    """ตรวจตาราง/คอลัมน์ก่อนเรียก Plotly และจับข้อผิดพลาดจากกราฟ."""
+    """ตรวจ DataFrame/คอลัมน์ก่อนเรียก Plotly และจับข้อผิดพลาดจากกราฟ."""
     if (
         frame is None
         or not isinstance(frame, pd.DataFrame)
@@ -703,7 +728,7 @@ def render_plotly_or_info(frame, required_columns, chart_builder, chart_key):
         st.info("ℹ️ ยังไม่มีข้อมูลสำหรับแสดงกราฟ")
 
 
-# ── Login และเมนูหลัก ─────────────────────────────────────────────────────────
+# ── Login และเมนู ─────────────────────────────────────────────────────────────
 try:
     init_db()
 except sqlite3.OperationalError as error:
@@ -798,7 +823,6 @@ if page == "📝 บันทึกใบเบิก":
             accept_new_options=True,
         )
 
-        # แสดงไลน์เฉพาะ PD เท่านั้น
         if department == "PD":
             line = cols[2].selectbox(
                 "ไลน์ผลิต (จำเป็น)",
@@ -840,8 +864,8 @@ if page == "📝 บันทึกใบเบิก":
                 st.warning("กรุณากรอกเลข JOB อย่างน้อย 1 รายการ")
             else:
                 saved, errors = 0, []
-                for index, (job, department, line, item, quantity) in enumerate(filled_rows):
-                    # เคลียร์ line ในขั้น INSERT หากแผนกไม่ใช่ PD
+                for job, department, line, item, quantity in filled_rows:
+                    # INSERT บังคับล้างไลน์สำหรับแผนกที่ไม่ใช่ PD
                     line_to_save = line if department == "PD" else ""
                     try:
                         ok, message = insert_requisition(
@@ -961,8 +985,8 @@ elif page == "📊 Dashboard":
         with right:
             st.markdown("#### 🏢 ใบเบิกเย็นแยกตามแผนก")
             dept_stats = pd.DataFrame()
-            needed = {"department", "job_number", "late"}
-            if needed.issubset(filtered.columns):
+            required = {"department", "job_number", "late"}
+            if required.issubset(filtered.columns):
                 dept_stats = (
                     filtered.groupby("department", dropna=False)
                     .agg(จำนวน=("job_number", "count"), ใบเบิกเย็น=("late", "sum"))
@@ -1039,7 +1063,7 @@ elif page == "✏️ จัดการ / อัปเดตสถานะ":
             parsed = as_bangkok(value)
             return parsed.time().replace(microsecond=0) if parsed else time(0, 0)
 
-        # สร้างค่าเริ่มต้นก่อน widgets แสดงผล และไม่เขียนทับค่าที่ผู้ใช้แก้
+        # กำหนดค่าเริ่มต้นก่อนสร้าง widgets และไม่เขียนทับค่าที่ผู้ใช้แก้ไว้
         picked_enabled_key = f"picked_enabled_{job_key}"
         handover_enabled_key = f"handover_enabled_{job_key}"
         picked_date_key = f"picked_date_{job_key}"
@@ -1256,7 +1280,7 @@ elif page == "📋 ประวัติ & Export":
         st.download_button(
             "📥 ดาวน์โหลด Excel (.xlsx)",
             data=make_excel(filtered),
-            file_name=f"warehouse_jobs_{now_bangkok().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            file_name="รายงานสรุปการเบิกสินค้า_คลังสินค้า.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
             key="download_excel_button",
@@ -1269,3 +1293,4 @@ st.markdown(
     "Warehouse Flow · เวลาอ้างอิง Asia/Bangkok · ผู้ใช้งาน Admin</div>",
     unsafe_allow_html=True,
 )
+                    
