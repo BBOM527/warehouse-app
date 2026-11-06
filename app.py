@@ -103,7 +103,7 @@ st.markdown(
     [data-testid="stButton"] button[kind="primary"],
     [data-testid="stFormSubmitButton"] button {
         background: linear-gradient(115deg, #059669, #0284c7);
-        color: #fff;
+        color: white;
         border: 0;
         box-shadow: 0 7px 18px rgba(2,132,199,.2);
     }
@@ -190,11 +190,8 @@ def format_duration(value):
 
 
 def init_db():
-    """
-    สร้างตารางเมื่อยังไม่มี และเพิ่มคอลัมน์ที่ขาดในฐานข้อมูลเดิม
-    รองรับชื่อคอลัมน์เก่าที่เคยใช้ เช่น line, completed_at
-    """
-    required_columns = {
+    """สร้างตารางและเติมคอลัมน์ที่ขาดในฐานข้อมูลเดิมอัตโนมัติ."""
+    definitions = {
         "id": "INTEGER",
         "job_number": "TEXT NOT NULL DEFAULT ''",
         "department": "TEXT NOT NULL DEFAULT ''",
@@ -242,23 +239,34 @@ def init_db():
             """
         )
 
-        existing = {
+        columns = {
             row[1] for row in conn.execute("PRAGMA table_info(requisitions)").fetchall()
         }
-
-        for column, definition in required_columns.items():
-            if column not in existing:
+        for name, definition in definitions.items():
+            if name not in columns:
                 conn.execute(
-                    f'ALTER TABLE requisitions ADD COLUMN "{column}" {definition}'
+                    f'ALTER TABLE requisitions ADD COLUMN "{name}" {definition}'
                 )
 
-        # เติม id ให้ข้อมูลเก่าที่อยู่ในตารางเดิมซึ่งไม่มี id
+        # เติม id และหมายเลข JOB ให้ข้อมูลเก่าที่ไม่มีค่า
+        conn.execute("UPDATE requisitions SET id = rowid WHERE id IS NULL")
         conn.execute(
-            "UPDATE requisitions SET id = rowid WHERE id IS NULL"
+            """
+            UPDATE requisitions
+            SET job_number = 'LEGACY-' || rowid
+            WHERE job_number IS NULL OR job_number = ''
+            """
+        )
+        conn.execute(
+            "UPDATE requisitions SET received_at=? WHERE received_at IS NULL OR received_at=''",
+            (now_bangkok().isoformat(),),
+        )
+        conn.execute(
+            "UPDATE requisitions SET status='กำลังจัด' WHERE status IS NULL OR status=''"
         )
 
-        # ย้ายข้อมูลจากชื่อคอลัมน์เก่ามายังคอลัมน์มาตรฐาน ถ้าพบ
-        existing = {
+        # ย้ายค่าจากคอลัมน์ชื่อเดิม ถ้าฐานข้อมูลเดิมมีคอลัมน์เหล่านั้น
+        columns = {
             row[1] for row in conn.execute("PRAGMA table_info(requisitions)").fetchall()
         }
         legacy_mappings = {
@@ -271,74 +279,45 @@ def init_db():
             "status": ("current_status",),
             "item_name": ("item", "product_name"),
         }
-
-        for target, candidates in legacy_mappings.items():
-            if target not in existing:
-                continue
-            for source in candidates:
-                if source in existing and source != target:
+        for target, sources in legacy_mappings.items():
+            for source in sources:
+                if target in columns and source in columns and source != target:
                     conn.execute(
                         f"""
                         UPDATE requisitions
-                        SET "{target}" = "{source}"
-                        WHERE ("{target}" IS NULL OR "{target}" = '')
+                        SET "{target}"="{source}"
+                        WHERE ("{target}" IS NULL OR "{target}"='')
                           AND "{source}" IS NOT NULL
                         """
                     )
 
-        # คอลัมน์ line และ production_line เก็บค่าเดียวกันเพื่อรองรับฐานข้อมูลเก่า
+        # ทำให้คอลัมน์ alias เก็บค่าเดียวกัน รองรับโค้ดรุ่นเดิม
         conn.execute(
             """
-            UPDATE requisitions
-            SET line = production_line
-            WHERE (line IS NULL OR line = '')
-              AND production_line IS NOT NULL AND production_line != ''
+            UPDATE requisitions SET line=production_line
+            WHERE (line IS NULL OR line='')
+              AND production_line IS NOT NULL AND production_line!=''
             """
         )
         conn.execute(
             """
-            UPDATE requisitions
-            SET production_line = line
-            WHERE (production_line IS NULL OR production_line = '')
-              AND line IS NOT NULL AND line != ''
+            UPDATE requisitions SET production_line=line
+            WHERE (production_line IS NULL OR production_line='')
+              AND line IS NOT NULL AND line!=''
             """
         )
         conn.execute(
             """
-            UPDATE requisitions
-            SET picked_at = completed_at
-            WHERE (picked_at IS NULL OR picked_at = '')
-              AND completed_at IS NOT NULL AND completed_at != ''
+            UPDATE requisitions SET picked_at=completed_at
+            WHERE (picked_at IS NULL OR picked_at='')
+              AND completed_at IS NOT NULL AND completed_at!=''
             """
         )
         conn.execute(
             """
-            UPDATE requisitions
-            SET completed_at = picked_at
-            WHERE (completed_at IS NULL OR completed_at = '')
-              AND picked_at IS NOT NULL AND picked_at != ''
-            """
-        )
-        conn.execute(
-            """
-            UPDATE requisitions
-            SET job_number = 'LEGACY-' || rowid
-            WHERE job_number IS NULL OR job_number = ''
-            """
-        )
-        conn.execute(
-            """
-            UPDATE requisitions
-            SET received_at = ?
-            WHERE received_at IS NULL OR received_at = ''
-            """,
-            (now_bangkok().isoformat(),),
-        )
-        conn.execute(
-            """
-            UPDATE requisitions
-            SET status = 'กำลังจัด'
-            WHERE status IS NULL OR status = ''
+            UPDATE requisitions SET completed_at=picked_at
+            WHERE (completed_at IS NULL OR completed_at='')
+              AND picked_at IS NOT NULL AND picked_at!=''
             """
         )
         conn.commit()
@@ -361,12 +340,9 @@ def load_data():
         )
 
     if not df.empty:
-        # ใช้ line เป็นคอลัมน์หลัก แต่รองรับค่าจาก production_line ในฐานข้อมูลเดิม
         df["line"] = df["line"].fillna("")
         empty_line = df["line"].eq("")
         df.loc[empty_line, "line"] = df.loc[empty_line, "production_line"].fillna("")
-
-        # รองรับ completed_at ที่เป็นข้อมูลเก่า
         df["picked_at"] = df["picked_at"].where(
             df["picked_at"].notna() & df["picked_at"].ne(""),
             df["completed_at"],
@@ -398,7 +374,7 @@ def load_data():
 
 
 def insert_requisition(job_number, department, line, item_name, quantity, received_at):
-    # บังคับว่าเฉพาะ PD เท่านั้นที่เก็บ L1-L10 ได้
+    # เฉพาะ PD เท่านั้นที่บันทึกค่า L1-L10 ได้
     if department == "PD":
         if line not in PRODUCTION_LINES:
             return False, f"กรุณาเลือกไลน์ผลิต L1-L10 สำหรับ JOB {job_number}"
@@ -410,16 +386,14 @@ def insert_requisition(job_number, department, line, item_name, quantity, receiv
         duplicate = conn.execute(
             """
             SELECT 1 FROM requisitions
-            WHERE job_number = ? AND status != 'ยกเลิก'
+            WHERE job_number=? AND status!='ยกเลิก'
             LIMIT 1
             """,
             (job_number,),
         ).fetchone()
-
         if duplicate:
             return False, f"เลข JOB {job_number} มีอยู่ในระบบแล้ว"
 
-        received_iso = stamp(received_at)
         conn.execute(
             """
             INSERT INTO requisitions
@@ -428,19 +402,11 @@ def insert_requisition(job_number, department, line, item_name, quantity, receiv
             VALUES (?, ?, ?, ?, ?, ?, ?, 'กำลังจัด', ?, ?)
             """,
             (
-                job_number,
-                department,
-                line,
-                line,  # เก็บสำเนาเพื่อรองรับ schema รุ่นเก่า
-                item_name,
-                quantity,
-                received_iso,
-                DISPLAY_NAME,
-                stamp(now_bangkok()),
+                job_number, department, line, line, item_name, quantity,
+                stamp(received_at), DISPLAY_NAME, stamp(now_bangkok()),
             ),
         )
         conn.commit()
-
     return True, f"บันทึก JOB {job_number} แล้ว"
 
 
@@ -448,7 +414,6 @@ def update_requisition(
     record_id, department, line, item_name, quantity,
     received_at, picked_at, handover_at,
 ):
-    # บังคับเงื่อนไขซ้ำก่อน UPDATE
     if department == "PD":
         if line not in PRODUCTION_LINES:
             raise ValueError("แผนก PD ต้องเลือกไลน์ผลิต L1-L10")
@@ -473,18 +438,9 @@ def update_requisition(
             WHERE id=?
             """,
             (
-                department,
-                line,
-                line,
-                item_name,
-                quantity,
-                stamp(received_at),
-                picked_iso,
-                picked_iso,
-                stamp(handover_at),
-                status,
-                stamp(now_bangkok()),
-                record_id,
+                department, line, line, item_name, quantity,
+                stamp(received_at), picked_iso, picked_iso, stamp(handover_at),
+                status, stamp(now_bangkok()), record_id,
             ),
         )
         conn.commit()
@@ -501,11 +457,8 @@ def cancel_requisition(record_id, cancelled_by, reason):
             WHERE id=?
             """,
             (
-                stamp(now_bangkok()),
-                cancelled_by.strip(),
-                reason.strip(),
-                stamp(now_bangkok()),
-                record_id,
+                stamp(now_bangkok()), cancelled_by.strip(), reason.strip(),
+                stamp(now_bangkok()), record_id,
             ),
         )
         conn.commit()
@@ -579,7 +532,6 @@ def render_login():
             submitted = st.form_submit_button(
                 "เข้าสู่ระบบ", type="primary", use_container_width=True
             )
-
         if submitted:
             if username == LOGIN_USERNAME and password == LOGIN_PASSWORD:
                 st.session_state["authenticated"] = True
@@ -605,7 +557,6 @@ def filter_data(df, key_prefix):
 
     start_date = end_date = None
     today = now_bangkok().date()
-
     if mode == "วันนี้":
         start_date = end_date = today
     elif mode == "สัปดาห์นี้":
@@ -633,7 +584,6 @@ def filter_data(df, key_prefix):
             + " " + result["item_name"].fillna("").astype(str)
         ).str.lower()
         result = result[searchable.str.contains(query, na=False)]
-
     return result
 
 
@@ -707,8 +657,33 @@ def make_excel(df):
     return buffer.getvalue()
 
 
-# ── Login และเมนู ─────────────────────────────────────────────────────────────
-init_db()
+def render_plotly_or_info(frame, required_columns, chart_builder):
+    """เช็ก DataFrame และคอลัมน์ก่อนสร้างกราฟ พร้อมจับ ValueError จาก Plotly."""
+    if (
+        frame is None
+        or not isinstance(frame, pd.DataFrame)
+        or frame.empty
+        or len(frame) == 0
+        or any(column not in frame.columns for column in required_columns)
+    ):
+        st.info("ℹ️ ยังไม่มีข้อมูลสำหรับแสดงกราฟ")
+        return
+
+    try:
+        fig = chart_builder(frame)
+        st.plotly_chart(fig, use_container_width=True)
+    except (ValueError, KeyError, TypeError, ZeroDivisionError) as error:
+        st.info("ℹ️ ยังไม่มีข้อมูลสำหรับแสดงกราฟ")
+        st.caption(f"รายละเอียดกราฟ: {error}")
+
+
+# ── Login และ Sidebar ─────────────────────────────────────────────────────────
+try:
+    init_db()
+except sqlite3.OperationalError as error:
+    st.error(f"เตรียมฐานข้อมูลไม่สำเร็จ: {error}")
+    st.stop()
+
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 
@@ -722,6 +697,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown(f"👤 **{DISPLAY_NAME}**")
     st.caption("ผู้ดูแลระบบ")
+
     page = st.radio(
         "เมนูหลัก",
         [
@@ -732,6 +708,7 @@ with st.sidebar:
         ],
         label_visibility="collapsed",
     )
+
     st.markdown("---")
     if st.button("ออกจากระบบ", use_container_width=True):
         st.session_state["authenticated"] = False
@@ -742,12 +719,12 @@ show_live_clock()
 
 try:
     data = load_data()
-except sqlite3.OperationalError as error:
+except (sqlite3.OperationalError, pd.errors.DatabaseError) as error:
     st.error(f"อ่านฐานข้อมูลไม่สำเร็จ: {error}")
     st.stop()
 
 
-# ── บันทึกหลาย JOB ───────────────────────────────────────────────────────────
+# ── บันทึกหลาย JOB พร้อมกัน ───────────────────────────────────────────────────
 if page == "📝 บันทึกใบเบิก":
     heading("บันทึกใบเบิก", "บันทึกงานระดับ JOB พร้อมเวลารับเอกสาร")
     st.caption(
@@ -792,7 +769,6 @@ if page == "📝 บันทึกใบเบิก":
             accept_new_options=True,
         )
 
-        # แสดงช่องไลน์เฉพาะ PD; แผนกอื่นจะไม่มีค่าไลน์ให้บันทึก
         if department == "PD":
             line = cols[2].selectbox(
                 "ไลน์ผลิต (จำเป็น)", PRODUCTION_LINES, key=f"new_line_{index}"
@@ -827,10 +803,10 @@ if page == "📝 บันทึกใบเบิก":
             else:
                 saved, errors = 0, []
                 for job, department, line, item, quantity in filled_rows:
-                    # ตรวจเงื่อนไขก่อน INSERT และล้างไลน์เมื่อแผนกไม่ใช่ PD
+                    # INSERT บังคับเคลียร์ไลน์สำหรับทุกแผนกที่ไม่ใช่ PD
                     line_to_save = line if department == "PD" else ""
                     try:
-                        success, message = insert_requisition(
+                        ok, message = insert_requisition(
                             str(job).strip(),
                             str(department).strip(),
                             line_to_save,
@@ -839,9 +815,9 @@ if page == "📝 บันทึกใบเบิก":
                             received_at,
                         )
                     except sqlite3.OperationalError as error:
-                        success, message = False, f"บันทึก JOB {job} ไม่สำเร็จ: {error}"
+                        ok, message = False, f"บันทึก JOB {job} ไม่สำเร็จ: {error}"
 
-                    if success:
+                    if ok:
                         saved += 1
                     else:
                         errors.append(message)
@@ -880,8 +856,12 @@ elif page == "📊 Dashboard":
         )
 
         cards = st.columns(4)
-        cards[0].metric("ใบเบิกในช่วงที่เลือก", f"{total:,}", f"วันนี้ {today_count:,} JOB")
-        cards[1].metric("ใบเบิกเย็น", f"{late_count / total * 100:.1f}%", f"{late_count:,} JOB")
+        cards[0].metric(
+            "ใบเบิกในช่วงที่เลือก", f"{total:,}", f"วันนี้ {today_count:,} JOB"
+        )
+        cards[1].metric(
+            "ใบเบิกเย็น", f"{late_count / total * 100:.1f}%", f"{late_count:,} JOB"
+        )
         cards[2].metric("เวลาจัดเฉลี่ย", format_duration(average_processing))
         bottleneck = "รอจัด" if pending_count else (
             "รอ PD รับ" if average_waiting else "ปกติ"
@@ -889,61 +869,81 @@ elif page == "📊 Dashboard":
         cards[3].metric("จุดคอขวด", bottleneck, f"ค้างจัด {pending_count:,} JOB")
 
         left, right = st.columns(2)
+
         with left:
             st.markdown("#### 🕒 ใบเบิกตามชั่วโมง")
-            hourly = (
-                filtered.assign(ชั่วโมง=filtered["received_at"].dt.hour)
-                .groupby("ชั่วโมง", as_index=False)
-                .size()
-                .rename(columns={"size": "จำนวน JOB"})
-            )
-            hourly = (
-                hourly.set_index("ชั่วโมง")
-                .reindex(range(24), fill_value=0)
-                .rename_axis("ชั่วโมง")
-                .reset_index()
-            )
-            fig = px.bar(
+            hourly = pd.DataFrame()
+            if "received_at" in filtered.columns:
+                hourly = (
+                    filtered.dropna(subset=["received_at"])
+                    .assign(ชั่วโมง=lambda frame: frame["received_at"].dt.hour)
+                    .groupby("ชั่วโมง", as_index=False)
+                    .size()
+                    .rename(columns={"size": "จำนวน JOB"})
+                )
+                if not hourly.empty:
+                    hourly = (
+                        hourly.set_index("ชั่วโมง")
+                        .reindex(range(24), fill_value=0)
+                        .rename_axis("ชั่วโมง")
+                        .reset_index()
+                    )
+
+            def hourly_chart(frame):
+                return px.bar(
+                    frame,
+                    x="ชั่วโมง",
+                    y="จำนวน JOB",
+                    color="จำนวน JOB",
+                    color_continuous_scale=["#bae6fd", "#0284c7"],
+                ).update_layout(
+                    height=330,
+                    margin=dict(l=10, r=10, t=20, b=10),
+                    plot_bgcolor="white",
+                    paper_bgcolor="white",
+                    coloraxis_showscale=False,
+                ).update_xaxes(dtick=1, title="ชั่วโมงที่รับใบเบิก").update_yaxes(
+                    title="จำนวน JOB", rangemode="tozero"
+                )
+
+            render_plotly_or_info(
                 hourly,
-                x="ชั่วโมง",
-                y="จำนวน JOB",
-                color="จำนวน JOB",
-                color_continuous_scale=["#bae6fd", "#0284c7"],
+                ["ชั่วโมง", "จำนวน JOB"],
+                hourly_chart,
             )
-            fig.update_layout(
-                height=330,
-                margin=dict(l=10, r=10, t=20, b=10),
-                plot_bgcolor="white",
-                paper_bgcolor="white",
-                coloraxis_showscale=False,
-            )
-            fig.update_xaxes(dtick=1, title="ชั่วโมงที่รับใบเบิก")
-            fig.update_yaxes(title="จำนวน JOB", rangemode="tozero")
-            st.plotly_chart(fig, use_container_width=True)
 
         with right:
             st.markdown("#### 🏢 ใบเบิกเย็นแยกตามแผนก")
-            dept_stats = (
-                filtered.groupby("department", dropna=False)
-                .agg(จำนวน=("job_number", "count"), ใบเบิกเย็น=("late", "sum"))
-                .reset_index()
-            )
-            dept_stats["แผนก"] = dept_stats["department"].fillna("ไม่ระบุ")
-            fig_dept = px.bar(
+            dept_stats = pd.DataFrame()
+            if {"department", "job_number", "late"}.issubset(filtered.columns):
+                dept_stats = (
+                    filtered.groupby("department", dropna=False)
+                    .agg(จำนวน=("job_number", "count"), ใบเบิกเย็น=("late", "sum"))
+                    .reset_index()
+                )
+                if not dept_stats.empty:
+                    dept_stats["แผนก"] = dept_stats["department"].fillna("ไม่ระบุ")
+
+            def department_chart(frame):
+                return px.bar(
+                    frame,
+                    x="แผนก",
+                    y=["จำนวน", "ใบเบิกเย็น"],
+                    barmode="group",
+                    color_discrete_sequence=["#38bdf8", "#f87171"],
+                ).update_layout(
+                    height=330,
+                    margin=dict(l=10, r=10, t=20, b=10),
+                    plot_bgcolor="white",
+                    paper_bgcolor="white",
+                    legend_title_text="ประเภท",
+                )
+
+            render_plotly_or_info(
                 dept_stats,
-                x="แผนก",
-                y=["จำนวน", "ใบเบิกเย็น"],
-                barmode="group",
-                color_discrete_sequence=["#38bdf8", "#f87171"],
+                ["แผนก", "จำนวน", "ใบเบิกเย็น"],
+                department_chart,
             )
-            fig_dept.update_layout(
-                height=330,
-                margin=dict(l=10, r=10, t=20, b=10),
-                plot_bgcolor="white",
-                paper_bgcolor="white",
-                legend_title_text="ประเภท",
-            )
-            st.plotly_chart(fig_dept, use_container_width=True)
 
         st.markdown("#### 📌 รายการในช่วงที่เลือก")
         show_table(filtered, "dashboard_table")
@@ -966,9 +966,7 @@ elif page == "✏️ จัดการ / อัปเดตสถานะ":
             for _, row in active.iterrows()
         }
         selected_id = st.selectbox(
-            "เลือก JOB",
-            ids,
-            format_func=lambda value: labels[int(value)],
+            "เลือก JOB", ids, format_func=lambda value: labels[int(value)]
         )
         record = active[active["id"] == selected_id].iloc[0]
 
@@ -1092,7 +1090,6 @@ elif page == "✏️ จัดการ / อัปเดตสถานะ":
                 accept_new_options=True,
             )
 
-            # เฉพาะ PD เท่านั้นที่แสดงและบังคับเลือกไลน์ผลิต
             edit_line = ""
             if edit_department == "PD":
                 old_line = str(record["line"] or "L1")
@@ -1108,19 +1105,18 @@ elif page == "✏️ จัดการ / อัปเดตสถานะ":
                 )
 
             edit_item = st.text_input(
-                "รายการ",
-                value=str(record["item_name"] or ""),
+                "รายการ", value=str(record["item_name"] or ""),
                 key=f"edit_item_{selected_id}",
             )
             edit_quantity = st.number_input(
                 "จำนวน",
                 min_value=0.0,
-                value=float(record["quantity"]) if pd.notna(record["quantity"]) else 0.0,
+                value=float(record["quantity"])
+                if pd.notna(record["quantity"]) else 0.0,
                 key=f"edit_quantity_{selected_id}",
             )
 
             if st.button("บันทึกการแก้ไขรายละเอียด", key=f"save_edit_{selected_id}"):
-                # เคลียร์ไลน์เป็น "" เสมอ หากแผนกไม่ใช่ PD
                 line_to_save = edit_line if edit_department == "PD" else ""
                 try:
                     update_requisition(
