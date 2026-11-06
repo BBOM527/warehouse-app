@@ -14,7 +14,7 @@ from openpyxl.utils import get_column_letter
 
 # ── ตั้งค่าระบบ ────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Warehouse Flow",
+    page_title="SMART WAREHOUSE",
     page_icon="📦",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -45,83 +45,145 @@ PRODUCTION_LINES = [f"L{i}" for i in range(1, 11)]
 CUTOFF_TIME = time(16, 0)
 
 
-# ── Modern Enterprise UI ──────────────────────────────────────────────────────
+# ── Custom Dark UI ────────────────────────────────────────────────────────────
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
 
-    :root { --ink:#172033; --muted:#64748b; --line:#e2e8f0; --canvas:#f8fafc; }
+    :root {
+        --bg: #0b1120;
+        --panel: #151f32;
+        --panel-2: #1c2940;
+        --border: #293750;
+        --blue: #579bff;
+        --green: #28d7a0;
+        --red: #ff667d;
+        --orange: #ffb454;
+        --muted: #91a0b9;
+        --text: #edf3ff;
+    }
     html, body, [class*="css"], [data-testid="stAppViewContainer"] {
-        font-family:'Kanit',sans-serif; color:var(--ink);
+        font-family: 'Prompt', sans-serif;
+        color: var(--text);
     }
-    [data-testid="stAppViewContainer"] {
-        background:radial-gradient(ellipse at 4% 0%,rgba(14,165,233,.07),transparent 32%),
-        radial-gradient(ellipse at 96% 5%,rgba(16,185,129,.07),transparent 28%),var(--canvas);
-    }
-    [data-testid="stHeader"] { background:rgba(248,250,252,.78); }
+    [data-testid="stAppViewContainer"] { background: var(--bg); }
+    [data-testid="stHeader"] { background: rgba(11,17,32,.92); }
+    [data-testid="stMain"] { background: var(--bg); }
     [data-testid="stSidebar"] {
-        background:linear-gradient(180deg,#101827 0%,#172033 100%);
-        border-right:1px solid rgba(255,255,255,.08);
+        background: #101a2b;
+        border-right: 1px solid var(--border);
     }
-    [data-testid="stSidebar"] * { color:#e2e8f0; }
+    [data-testid="stSidebar"] * { color: var(--text); }
+    [data-testid="stSidebar"] [data-testid="stRadio"] label { color: #d8e2f2; }
+
+    h1, h2, h3, p, label { color: var(--text); }
+    h1 { font-weight: 600; letter-spacing: -.02em; }
+    [data-testid="stCaptionContainer"], .stCaption { color: var(--muted); }
+
     [data-testid="stMetric"] {
-        background:#fff; border:1px solid var(--line); border-radius:16px;
-        padding:18px 20px; box-shadow:0 10px 30px rgba(0,0,0,.05);
+        background: linear-gradient(145deg, var(--panel), #18243a);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 18px 20px;
+        box-shadow: 0 10px 30px rgba(0,0,0,.20);
     }
-    [data-testid="stMetricLabel"] { color:var(--muted); }
-    [data-testid="stMetricValue"] { color:var(--ink); font-weight:600; }
-    [data-testid="stForm"], [data-testid="stExpander"], [data-testid="stDataFrame"],
-    [data-testid="stDialog"] {
-        border:1px solid var(--line); border-radius:16px;
-        box-shadow:0 10px 30px rgba(0,0,0,.05); overflow:hidden; background:#fff;
+    [data-testid="stMetricLabel"] { color: var(--muted); }
+    [data-testid="stMetricValue"] { color: var(--text); font-weight: 600; }
+
+    [data-testid="stForm"], [data-testid="stExpander"],
+    [data-testid="stDataFrame"], [data-testid="stTable"],
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow: 0 10px 30px rgba(0,0,0,.18);
     }
-    [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
-    [data-testid="stDateInput"] input, [data-testid="stTimeInput"] input,
-    [data-testid="stSelectbox"] [data-baseweb="select"]>div,
-    [data-testid="stTextArea"] textarea { border-radius:12px; }
-    [data-testid="stButton"] button, [data-testid="stFormSubmitButton"] button,
+    [data-testid="stExpander"] summary { color: var(--text); }
+
+    [data-testid="stTextInput"] input,
+    [data-testid="stNumberInput"] input,
+    [data-testid="stDateInput"] input,
+    [data-testid="stTimeInput"] input,
+    [data-testid="stTextArea"] textarea,
+    [data-testid="stSelectbox"] [data-baseweb="select"] > div {
+        background: var(--panel-2);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+    }
+    [data-testid="stSelectbox"] [data-baseweb="select"] *,
+    [data-testid="stTextInput"] input::placeholder,
+    [data-testid="stTextArea"] textarea::placeholder {
+        color: var(--muted);
+    }
+
+    [data-testid="stButton"] button,
+    [data-testid="stFormSubmitButton"] button,
     [data-testid="stDownloadButton"] button {
-        border-radius:12px; font-family:'Kanit',sans-serif; font-weight:500;
-        transition:transform .18s ease,box-shadow .18s ease,filter .18s ease;
+        border-radius: 12px;
+        font-family: 'Prompt', sans-serif;
+        font-weight: 500;
+        transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
     }
     [data-testid="stButton"] button[kind="primary"],
     [data-testid="stFormSubmitButton"] button {
-        background:linear-gradient(115deg,#059669,#0284c7); color:#fff;
-        border:0; box-shadow:0 7px 18px rgba(2,132,199,.2);
+        color: #06131e;
+        border: 0;
+        background: linear-gradient(115deg, #28d7a0, #579bff);
+        box-shadow: 0 7px 20px rgba(40,215,160,.17);
     }
     [data-testid="stButton"] button:hover,
     [data-testid="stFormSubmitButton"] button:hover,
     [data-testid="stDownloadButton"] button:hover {
-        transform:translateY(-2px); box-shadow:0 10px 22px rgba(15,23,42,.12);
-        filter:brightness(1.03);
+        transform: translateY(-2px);
+        box-shadow: 0 10px 24px rgba(0,0,0,.25);
+        filter: brightness(1.08);
     }
-    .page-heading { margin:.25rem 0 1.2rem; }
-    .page-heading h1 { margin:0; font-weight:600; letter-spacing:-.02em; }
-    .eyebrow { color:#0284c7; letter-spacing:.12em; font-size:.76rem; font-weight:600; }
+
+    .topbar {
+        display:flex; justify-content:space-between; align-items:center;
+        padding:15px 20px; margin:0 0 18px; gap:1rem;
+        background:linear-gradient(110deg,#151f32,#1c2940);
+        border:1px solid var(--border); border-radius:14px;
+        box-shadow:0 10px 30px rgba(0,0,0,.2);
+    }
+    .brand { font-size:1.18rem; font-weight:700; letter-spacing:.08em; color:#edf3ff; }
+    .profile {
+        color:#28d7a0; font-size:.9rem; padding:6px 12px;
+        border:1px solid rgba(40,215,160,.3); border-radius:999px;
+        background:rgba(40,215,160,.08);
+    }
+    .page-heading { margin:.25rem 0 1.15rem; }
+    .page-heading h1 { margin:0; font-weight:600; }
+    .eyebrow { color:var(--blue); letter-spacing:.12em; font-size:.74rem; font-weight:600; }
     .subtle { color:var(--muted); }
     .clock-card {
         display:flex; justify-content:space-between; align-items:center; gap:1rem;
-        background:rgba(255,255,255,.88); border:1px solid var(--line);
-        border-radius:16px; padding:12px 18px; margin-bottom:1.2rem;
-        box-shadow:0 10px 30px rgba(0,0,0,.05);
+        background:var(--panel); border:1px solid var(--border);
+        border-radius:14px; padding:12px 18px; margin-bottom:1rem;
     }
-    .clock-time { font-size:1.15rem; font-weight:600; color:#0f766e; }
+    .clock-time { font-size:1.1rem; font-weight:600; color:var(--green); }
     .clock-date { color:var(--muted); font-size:.9rem; }
     .section-card, .timeline-card {
-        background:#fff; border:1px solid var(--line); border-radius:16px;
-        padding:18px 20px; box-shadow:0 10px 30px rgba(0,0,0,.05);
-        margin-bottom:1rem;
+        background:var(--panel); border:1px solid var(--border);
+        border-radius:14px; padding:18px 20px;
+        box-shadow:0 10px 30px rgba(0,0,0,.18); margin-bottom:1rem;
     }
     .timeline-step {
-        border-left:3px solid #38bdf8; padding:4px 0 12px 14px; margin:0 0 8px 4px;
+        border-left:3px solid var(--blue); padding:4px 0 12px 14px;
+        margin:0 0 8px 4px; color:var(--text);
     }
-    .timeline-step.danger { border-left-color:#ef4444; }
-    .timeline-time { color:#0f766e; font-weight:600; }
-    .login-wrap {
-        max-width:480px; margin:8vh auto 0; padding:2rem; background:#fff;
-        border:1px solid var(--line); border-radius:20px;
-        box-shadow:0 20px 50px rgba(15,23,42,.09);
+    .timeline-step.danger { border-left-color:var(--red); }
+    .timeline-time { color:var(--green); font-weight:600; }
+    .login-card {
+        max-width:480px; margin:8vh auto 0; padding:28px;
+        background:var(--panel); border:1px solid var(--border);
+        border-radius:18px; box-shadow:0 20px 50px rgba(0,0,0,.3);
+    }
+    .footer {
+        text-align:center; color:var(--muted);
+        font-size:.78rem; padding:28px 0 8px; letter-spacing:.08em;
     }
     </style>
     """,
@@ -129,13 +191,12 @@ st.markdown(
 )
 
 
-# ── Helper functions: ประกาศก่อนเรียกใช้ในทุกหน้า ────────────────────────────
+# ── Helpers: ประกาศก่อนเรียกใช้ในทุกหน้า ────────────────────────────────────
 def heading(title, subtitle):
-    """แสดงหัวข้อและคำอธิบายของหน้า."""
     st.markdown(
         f"""
         <div class="page-heading">
-          <div class="eyebrow">WAREHOUSE FLOW · CONTROL CENTER</div>
+          <div class="eyebrow">SMART WAREHOUSE · CONTROL CENTER</div>
           <h1>{html.escape(str(title))}</h1>
           <div class="subtle">{html.escape(str(subtitle))}</div>
         </div>
@@ -181,8 +242,8 @@ def duration_minutes(start, end):
     start_dt, end_dt = as_bangkok(start), as_bangkok(end)
     if start_dt is None or end_dt is None:
         return None
-    value = (end_dt - start_dt).total_seconds() / 60
-    return round(value, 1) if value >= 0 else None
+    minutes = (end_dt - start_dt).total_seconds() / 60
+    return round(minutes, 1) if minutes >= 0 else None
 
 
 def format_duration(value):
@@ -203,7 +264,7 @@ def job_status(row):
     return "🟠 กำลังจัด"
 
 
-# ── SQLite และ Auto Schema Update ─────────────────────────────────────────────
+# ── SQLite Auto Schema Update ─────────────────────────────────────────────────
 def init_db():
     column_definitions = {
         "id": "INTEGER",
@@ -265,8 +326,6 @@ def init_db():
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(requisitions)").fetchall()
         }
-
-        # คัดลอกข้อมูลจากชื่อคอลัมน์เดิม หากฐานข้อมูลรุ่นเก่ามีอยู่
         aliases = {
             "job_number": ("job_id", "job_no", "requisition_no"),
             "department": ("dept",),
@@ -277,6 +336,7 @@ def init_db():
             "status": ("current_status",),
             "item_name": ("item", "product_name"),
         }
+
         for target, sources in aliases.items():
             for source in sources:
                 if target in columns and source in columns and target != source:
@@ -343,7 +403,7 @@ def load_data():
     init_db()
     with sqlite3.connect(DB_PATH, timeout=30) as conn:
         conn.execute("PRAGMA busy_timeout = 30000")
-        df = pd.read_sql_query(
+        data = pd.read_sql_query(
             """
             SELECT id, job_number, department, line, production_line, item_name,
                    quantity, received_at, started_at, picked_at, completed_at,
@@ -355,44 +415,44 @@ def load_data():
             conn,
         )
 
-    if not df.empty:
-        df["line"] = df["line"].fillna("")
-        missing_line = df["line"].eq("")
-        df.loc[missing_line, "line"] = df.loc[
+    if not data.empty:
+        data["line"] = data["line"].fillna("")
+        missing_line = data["line"].eq("")
+        data.loc[missing_line, "line"] = data.loc[
             missing_line, "production_line"
         ].fillna("")
-        df["picked_at"] = df["picked_at"].where(
-            df["picked_at"].notna() & df["picked_at"].ne(""),
-            df["completed_at"],
+        data["picked_at"] = data["picked_at"].where(
+            data["picked_at"].notna() & data["picked_at"].ne(""),
+            data["completed_at"],
         )
 
         for column in (
             "received_at", "started_at", "picked_at",
             "handover_at", "cancelled_at", "updated_at",
         ):
-            df[column] = pd.to_datetime(
-                df[column], errors="coerce", utc=True
+            data[column] = pd.to_datetime(
+                data[column], errors="coerce", utc=True
             ).dt.tz_convert("Asia/Bangkok")
 
-        df["processing_minutes"] = df.apply(
+        data["processing_minutes"] = data.apply(
             lambda row: duration_minutes(row["received_at"], row["picked_at"]),
             axis=1,
         )
-        df["waiting_minutes"] = df.apply(
+        data["waiting_minutes"] = data.apply(
             lambda row: duration_minutes(row["picked_at"], row["handover_at"]),
             axis=1,
         )
-        df["late"] = df["received_at"].apply(
+        data["late"] = data["received_at"].apply(
             lambda value: bool(
                 pd.notna(value)
                 and value.time().replace(tzinfo=None) > CUTOFF_TIME
             )
         )
-    return df
+    return data
 
 
 def insert_requisition(job_number, department, line, item_name, quantity, received_at):
-    # บังคับให้แผนกที่ไม่ใช่ PD บันทึก line เป็นค่าว่าง
+    # เฉพาะ PD เท่านั้นที่บันทึก L1-L10 ได้ แผนกอื่นต้องบันทึก line ว่าง
     if department == "PD":
         if line not in PRODUCTION_LINES:
             return False, f"กรุณาเลือกไลน์ผลิต L1-L10 สำหรับ JOB {job_number}"
@@ -401,7 +461,7 @@ def insert_requisition(job_number, department, line, item_name, quantity, receiv
 
     with sqlite3.connect(DB_PATH, timeout=30) as conn:
         conn.execute("PRAGMA busy_timeout = 30000")
-        duplicate = conn.execute(
+        exists = conn.execute(
             """
             SELECT 1 FROM requisitions
             WHERE job_number=? AND status!='ยกเลิก'
@@ -409,7 +469,7 @@ def insert_requisition(job_number, department, line, item_name, quantity, receiv
             """,
             (job_number,),
         ).fetchone()
-        if duplicate:
+        if exists:
             return False, f"เลข JOB {job_number} มีอยู่ในระบบแล้ว"
 
         conn.execute(
@@ -482,16 +542,16 @@ def cancel_requisition(record_id, cancelled_by, reason):
         conn.commit()
 
 
-# ── ตาราง, กรองข้อมูล และกราฟ ─────────────────────────────────────────────────
-def filter_data(df, prefix):
-    col_search, col_period = st.columns([1.4, 1])
-    with col_search:
+# ── ตารางและกรองข้อมูล ───────────────────────────────────────────────────────
+def filter_data(data, prefix):
+    search_col, period_col = st.columns([1.4, 1])
+    with search_col:
         query = st.text_input(
             "🔎 ค้นหา JOB / สินค้า / แผนก / ไลน์",
             key=f"{prefix}_search",
             placeholder="พิมพ์คำค้นหา…",
         ).strip().lower()
-    with col_period:
+    with period_col:
         period = st.selectbox(
             "ช่วงวันที่",
             ["ทั้งหมด", "วันนี้", "สัปดาห์นี้", "เลือกช่วงวันที่"],
@@ -514,10 +574,12 @@ def filter_data(df, prefix):
         if isinstance(selected, (tuple, list)) and len(selected) == 2:
             start_date, end_date = selected
 
-    result = df.copy()
+    result = data.copy()
     if start_date and end_date and not result.empty:
-        dates = result["received_at"].dt.date
-        result = result[(dates >= start_date) & (dates <= end_date)]
+        received_dates = result["received_at"].dt.date
+        result = result[
+            (received_dates >= start_date) & (received_dates <= end_date)
+        ]
 
     if query and not result.empty:
         searchable = (
@@ -530,74 +592,60 @@ def filter_data(df, prefix):
     return result
 
 
-def display_table(df, key):
-    if df.empty:
+def display_table(data, key):
+    if data.empty:
         st.info("ยังไม่มีข้อมูลใบเบิกในเงื่อนไขที่เลือก")
         return
 
-    view = df.copy()
-    view["สถานะงาน"] = view.apply(job_status, axis=1)
-    view["แท็ก"] = view["late"].map({True: "🔴 ใบเบิกเย็น", False: "ปกติ"})
+    view = data.copy()
+    view["สถานะปัจจุบัน"] = view.apply(job_status, axis=1)
+    view["แท็ก"] = view["late"].map({True: "🔴 ใบเบิกเย็น", False: "🟢 ปกติ"})
     view["วันเวลาที่เบิก"] = view["received_at"].apply(display_datetime)
     view["เวลาจัดเสร็จ"] = view["picked_at"].apply(display_datetime)
     view["เวลา PD มารับ"] = view["handover_at"].apply(display_datetime)
     view["ระยะเวลาจัดสินค้า"] = view["processing_minutes"].apply(format_duration)
     view["ระยะเวลารอรับสินค้า"] = view["waiting_minutes"].apply(format_duration)
 
-    labels = {
+    columns = {
         "job_number": "เลขที่ Job",
         "วันเวลาที่เบิก": "วันเวลาที่เบิก",
         "department": "แผนกที่เบิก",
         "line": "ไลน์ผลิต",
         "item_name": "รายการสินค้า",
         "quantity": "จำนวน",
-        "สถานะงาน": "สถานะปัจจุบัน",
+        "สถานะปัจจุบัน": "สถานะปัจจุบัน",
         "เวลาจัดเสร็จ": "เวลาจัดเสร็จ",
         "เวลา PD มารับ": "เวลา PD มารับ",
         "ระยะเวลาจัดสินค้า": "ระยะเวลาจัดสินค้า",
         "ระยะเวลารอรับสินค้า": "ระยะเวลารอรับสินค้า",
         "แท็ก": "แท็ก",
     }
-    columns = [column for column in labels if column in view.columns]
+    selected_columns = [column for column in columns if column in view.columns]
     st.dataframe(
-        view[columns].rename(columns=labels),
+        view[selected_columns].rename(columns=columns),
         use_container_width=True,
         hide_index=True,
         key=key,
     )
 
 
-def render_plotly_or_info(frame, required_columns, builder, key):
-    if (
-        not isinstance(frame, pd.DataFrame)
-        or frame.empty
-        or any(column not in frame.columns for column in required_columns)
-    ):
-        st.info("ℹ️ ยังไม่มีข้อมูลสำหรับแสดงกราฟ")
-        return
-    try:
-        st.plotly_chart(builder(frame), use_container_width=True, key=key)
-    except (ValueError, KeyError, TypeError, ZeroDivisionError):
-        st.info("ℹ️ ยังไม่มีข้อมูลสำหรับแสดงกราฟ")
-
-
-def make_excel(df):
-    export = pd.DataFrame(index=df.index)
-    export["เลขที่ Job"] = df["job_number"].fillna("").astype(str)
-    export["วันเวลาที่เบิก"] = df["received_at"].apply(display_datetime)
-    export["แผนกที่เบิก"] = df["department"].fillna("").astype(str)
-    export["ไลน์ผลิต"] = df["line"].fillna("").astype(str)
-    export["รายการสินค้า"] = df["item_name"].fillna("").astype(str)
-    export["จำนวน"] = df["quantity"].apply(
+def make_excel(data):
+    export = pd.DataFrame(index=data.index)
+    export["เลขที่ Job"] = data["job_number"].fillna("").astype(str)
+    export["วันเวลาที่เบิก"] = data["received_at"].apply(display_datetime)
+    export["แผนกที่เบิก"] = data["department"].fillna("").astype(str)
+    export["ไลน์ผลิต"] = data["line"].fillna("").astype(str)
+    export["รายการสินค้า"] = data["item_name"].fillna("").astype(str)
+    export["จำนวน"] = data["quantity"].apply(
         lambda value: "" if pd.isna(value) else value
     )
-    export["สถานะปัจจุบัน"] = df.apply(job_status, axis=1)
-    export["เวลาจัดเสร็จ"] = df["picked_at"].apply(display_datetime)
-    export["เวลา PD มารับ"] = df["handover_at"].apply(display_datetime)
-    export["ระยะเวลาจัดสินค้า (นาที)"] = df["processing_minutes"].apply(
+    export["สถานะปัจจุบัน"] = data.apply(job_status, axis=1)
+    export["เวลาจัดเสร็จ"] = data["picked_at"].apply(display_datetime)
+    export["เวลา PD มารับ"] = data["handover_at"].apply(display_datetime)
+    export["ระยะเวลาจัดสินค้า (นาที)"] = data["processing_minutes"].apply(
         lambda value: "" if pd.isna(value) else round(float(value), 1)
     )
-    export["ระยะเวลารอรับสินค้า (นาที)"] = df["waiting_minutes"].apply(
+    export["ระยะเวลารอรับสินค้า (นาที)"] = data["waiting_minutes"].apply(
         lambda value: "" if pd.isna(value) else round(float(value), 1)
     )
 
@@ -609,7 +657,7 @@ def make_excel(df):
         sheet.auto_filter.ref = sheet.dimensions
         sheet.row_dimensions[1].height = 30
 
-        header_fill = PatternFill("solid", fgColor="123047")
+        header_fill = PatternFill("solid", fgColor="151F32")
         header_font = Font(name="Aptos", bold=True, color="FFFFFF", size=11)
         body_font = Font(name="Aptos", size=10)
 
@@ -627,40 +675,60 @@ def make_excel(df):
                 cell.font = header_font if cell.row == 1 else body_font
                 if cell.row > 1:
                     cell.alignment = Alignment(vertical="center")
-                longest = max(longest, len("" if cell.value is None else str(cell.value)))
+                longest = max(
+                    longest,
+                    len("" if cell.value is None else str(cell.value)),
+                )
             sheet.column_dimensions[letter].width = min(max(longest + 3, 12), 42)
 
     buffer.seek(0)
     return buffer.getvalue()
 
 
-# ── เสียงและ Timeline dialog ─────────────────────────────────────────────────
-def play_success_sound():
-    components.html(
-        """
-        <script>
-        try {
-          const ctx = new (window.AudioContext || window.webkitAudioContext)();
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = "sine";
-          osc.frequency.setValueAtTime(880, ctx.currentTime);
-          osc.frequency.exponentialRampToValueAtTime(520, ctx.currentTime + 0.045);
-          gain.gain.setValueAtTime(0.12, ctx.currentTime);
-          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.start();
-          osc.stop(ctx.currentTime + 0.05);
-        } catch (error) {}
-        </script>
-        """,
-        height=0,
+def make_csv(data):
+    # UTF-8 BOM ช่วยให้ Excel เปิดภาษาไทยได้ถูกต้อง
+    return make_excel_dataframe(data).to_csv(index=False).encode("utf-8-sig")
+
+
+def make_excel_dataframe(data):
+    export = pd.DataFrame(index=data.index)
+    export["เลขที่ Job"] = data["job_number"].fillna("").astype(str)
+    export["วันเวลาที่เบิก"] = data["received_at"].apply(display_datetime)
+    export["แผนกที่เบิก"] = data["department"].fillna("").astype(str)
+    export["ไลน์ผลิต"] = data["line"].fillna("").astype(str)
+    export["รายการสินค้า"] = data["item_name"].fillna("").astype(str)
+    export["จำนวน"] = data["quantity"].apply(
+        lambda value: "" if pd.isna(value) else value
     )
+    export["สถานะปัจจุบัน"] = data.apply(job_status, axis=1)
+    export["เวลาจัดเสร็จ"] = data["picked_at"].apply(display_datetime)
+    export["เวลา PD มารับ"] = data["handover_at"].apply(display_datetime)
+    export["ระยะเวลาจัดสินค้า (นาที)"] = data["processing_minutes"].apply(
+        lambda value: "" if pd.isna(value) else round(float(value), 1)
+    )
+    export["ระยะเวลารอรับสินค้า (นาที)"] = data["waiting_minutes"].apply(
+        lambda value: "" if pd.isna(value) else round(float(value), 1)
+    )
+    return export
 
 
+def render_plotly_or_info(frame, required_columns, builder, key):
+    if (
+        not isinstance(frame, pd.DataFrame)
+        or frame.empty
+        or any(column not in frame.columns for column in required_columns)
+    ):
+        st.info("ℹ️ ยังไม่มีข้อมูลสำหรับแสดงกราฟ")
+        return
+    try:
+        st.plotly_chart(builder(frame), use_container_width=True, key=key)
+    except (ValueError, KeyError, TypeError, ZeroDivisionError):
+        st.info("ℹ️ ยังไม่มีข้อมูลสำหรับแสดงกราฟ")
+
+
+# ── Callback และ Dialog ───────────────────────────────────────────────────────
 def set_timestamp(date_key, time_key, enabled_key):
-    """Callback ทำงานก่อนวาด widget รอบใหม่ จึงแก้ session state ได้ปลอดภัย."""
+    """Callback ทำงานก่อนสร้าง widget รอบใหม่ จึงแก้ session state ได้ปลอดภัย."""
     current = now_bangkok()
     st.session_state[date_key] = current.date()
     st.session_state[time_key] = current.time().replace(microsecond=0)
@@ -674,54 +742,49 @@ def show_timeline_dialog(record):
     line = html.escape(str(record.get("line") or "—"))
     item = html.escape(str(record.get("item_name") or "—"))
     status = html.escape(job_status(record))
-    is_cancelled = str(record.get("status", "")) == "ยกเลิก"
+    cancelled = str(record.get("status", "")) == "ยกเลิก"
 
-    received = html.escape(display_datetime(record.get("received_at")))
-    picked = html.escape(display_datetime(record.get("picked_at")))
-    handover = html.escape(display_datetime(record.get("handover_at")))
-    cancelled = html.escape(display_datetime(record.get("cancelled_at")))
-    processing = html.escape(format_duration(record.get("processing_minutes")))
-    waiting = html.escape(format_duration(record.get("waiting_minutes")))
-    cancelled_by = html.escape(str(record.get("cancelled_by") or "—"))
-    reason = html.escape(str(record.get("cancel_reason") or "—"))
-
-    cancellation_block = ""
-    if is_cancelled:
-        cancellation_block = f"""
+    cancel_block = ""
+    if cancelled:
+        cancel_block = f"""
         <div class="timeline-step danger">
-          🔴 ยกเลิก<br><span class="timeline-time">{cancelled}</span>
-          <div>ผู้สั่งยกเลิก: {cancelled_by}</div>
-          <div>สาเหตุ: {reason}</div>
+          🔴 ยกเลิก<br>
+          <span class="timeline-time">{html.escape(display_datetime(record.get("cancelled_at")))}</span>
+          <div>ผู้สั่งยกเลิก: {html.escape(str(record.get("cancelled_by") or "—"))}</div>
+          <div>สาเหตุ: {html.escape(str(record.get("cancel_reason") or "—"))}</div>
         </div>
         """
 
     st.markdown(
         f"""
         <div class="timeline-card">
-          <div class="eyebrow">WAREHOUSE DOCUMENT EVIDENCE</div>
+          <div class="eyebrow">SMART WAREHOUSE · EVIDENCE SLIP</div>
           <h2>JOB {job}</h2>
           <div>แผนก: <b>{department}</b>　ไลน์: <b>{line}</b></div>
           <div>รายการ: {item}</div>
           <div>สถานะ: <b>{status}</b></div>
           <hr>
           <div class="timeline-step">
-            📥 รับเอกสาร<br><span class="timeline-time">{received}</span>
+            📥 รับเอกสาร<br>
+            <span class="timeline-time">{html.escape(display_datetime(record.get("received_at")))}</span>
           </div>
           <div class="timeline-step">
-            📦 จัดเสร็จ<br><span class="timeline-time">{picked}</span>
-            <div>ระยะเวลาจัด: {processing}</div>
+            📦 จัดเสร็จ<br>
+            <span class="timeline-time">{html.escape(display_datetime(record.get("picked_at")))}</span>
+            <div>ระยะเวลาจัด: {html.escape(format_duration(record.get("processing_minutes")))}</div>
           </div>
           <div class="timeline-step">
-            🟢 PD มารับสินค้า<br><span class="timeline-time">{handover}</span>
-            <div>ระยะเวลารอรับ: {waiting}</div>
+            🟢 PD มารับสินค้า<br>
+            <span class="timeline-time">{html.escape(display_datetime(record.get("handover_at")))}</span>
+            <div>ระยะเวลารอรับ: {html.escape(format_duration(record.get("waiting_minutes")))}</div>
           </div>
-          {cancellation_block}
+          {cancel_block}
           <div class="subtle">เวลาอ้างอิง Asia/Bangkok · ผู้บันทึก: Admin</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    st.caption("ใช้คำสั่งพิมพ์ของเบราว์เซอร์หรือจับภาพหน้าจอเพื่อส่งเป็นหลักฐาน")
+    st.caption("จับภาพหน้าจอหรือใช้คำสั่งพิมพ์ของเบราว์เซอร์เพื่อส่งเป็นหลักฐาน")
 
 
 def show_live_clock():
@@ -729,7 +792,7 @@ def show_live_clock():
         """
         <div class="clock-card">
           <div>
-            <div style="font-weight:600;color:#172033">🕒 เวลาประเทศไทย</div>
+            <div style="font-weight:600;color:#edf3ff">🕒 เวลาประเทศไทย</div>
             <div id="thai-date" class="clock-date">กำลังโหลดวันที่…</div>
           </div>
           <div id="thai-clock" class="clock-time">--:--:--</div>
@@ -757,6 +820,30 @@ def show_live_clock():
     )
 
 
+def play_success_sound():
+    components.html(
+        """
+        <script>
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(880, ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(520, ctx.currentTime + 0.045);
+          gain.gain.setValueAtTime(0.12, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.05);
+        } catch (error) {}
+        </script>
+        """,
+        height=0,
+    )
+
+
 # ── Login ─────────────────────────────────────────────────────────────────────
 try:
     init_db()
@@ -770,9 +857,9 @@ if "authenticated" not in st.session_state:
 if not st.session_state["authenticated"]:
     st.markdown(
         """
-        <div class="login-wrap">
-          <div class="eyebrow">WAREHOUSE FLOW</div>
-          <h1 style="margin:.25rem 0">📦 เข้าสู่ระบบ</h1>
+        <div class="login-card">
+          <div class="eyebrow">SMART WAREHOUSE</div>
+          <h1>📦 เข้าสู่ระบบ</h1>
           <div class="subtle">ระบบติดตามใบเบิกและวิเคราะห์งานคลังสินค้า</div>
         </div>
         """,
@@ -795,20 +882,20 @@ if not st.session_state["authenticated"]:
     st.stop()
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
+# ── Sidebar และ Topbar ────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## 📦 Warehouse Flow")
-    st.caption("DOCUMENT TRACKING")
+    st.markdown("## 📦 SMART WAREHOUSE")
+    st.caption("BUSINESS MANAGEMENT SYSTEM")
     st.markdown("---")
     st.markdown(f"👤 **{DISPLAY_NAME}**")
-    st.caption("ผู้ดูแลระบบ")
+    st.caption("Administrator")
     page = st.radio(
         "เมนูหลัก",
         [
-            "📝 บันทึกใบเบิก",
             "📊 Dashboard",
-            "✏️ จัดการ / อัปเดตสถานะ",
-            "📋 ประวัติ & Export",
+            "📝 บันทึกใบเบิก",
+            "⚙️ จัดการสถานะ",
+            "📄 ประวัติ / Reports",
         ],
         key="main_navigation",
         label_visibility="collapsed",
@@ -818,6 +905,16 @@ with st.sidebar:
         st.session_state["authenticated"] = False
         st.session_state.pop("display_name", None)
         st.rerun()
+
+st.markdown(
+    """
+    <div class="topbar">
+      <div class="brand">SMART WAREHOUSE</div>
+      <div class="profile">● Administrator</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 if st.session_state.pop("play_success_tick", False):
     play_success_sound()
@@ -831,12 +928,135 @@ except (sqlite3.OperationalError, pd.errors.DatabaseError) as error:
     st.stop()
 
 
-# ── หน้า 1: บันทึกใบเบิก ─────────────────────────────────────────────────────
-if page == "📝 บันทึกใบเบิก":
+# ── หน้า 1: Dashboard ─────────────────────────────────────────────────────────
+if page == "📊 Dashboard":
+    heading("ภาพรวมคลังสินค้า", "ติดตามปริมาณงาน ระยะเวลาจัด และสัดส่วนใบเบิกเย็น")
+    filtered = filter_data(data, "dashboard")
+
+    if filtered.empty:
+        st.info("ยังไม่มีข้อมูลใบเบิก")
+    else:
+        total = len(filtered)
+        late_count = int(filtered["late"].sum())
+        pending_count = int(filtered["status"].eq("กำลังจัด").sum())
+
+        processing_values = filtered["processing_minutes"].dropna().tolist()
+        average_processing = (
+            sum(processing_values) / len(processing_values)
+            if processing_values else 0
+        )
+        waiting_values = filtered["waiting_minutes"].dropna().tolist()
+        average_waiting = (
+            sum(waiting_values) / len(waiting_values)
+            if waiting_values else 0
+        )
+
+        kpis = st.columns(4)
+        kpis[0].metric("ใบเบิกทั้งหมด", f"{total:,}", "รายการตามตัวกรอง")
+        kpis[1].metric("จุดคอขวด · รอจัด", f"{pending_count:,}", "JOB")
+        kpis[2].metric("เวลาจัดเฉลี่ย", format_duration(average_processing))
+        kpis[3].metric(
+            "ใบเบิกเย็น",
+            f"{(late_count / total * 100):.1f}%",
+            f"{late_count:,} จาก {total:,} JOB",
+        )
+
+        chart_left, chart_right = st.columns(2)
+
+        with chart_left:
+            st.markdown("#### 🍩 ใบเบิกปกติ เทียบกับใบเบิกเย็น")
+            mix = pd.DataFrame(
+                {
+                    "ประเภทใบเบิก": ["ใบเบิกปกติ", "ใบเบิกเย็น"],
+                    "จำนวน": [max(total - late_count, 0), late_count],
+                }
+            )
+
+            def donut_chart(frame):
+                fig = px.pie(
+                    frame,
+                    names="ประเภทใบเบิก",
+                    values="จำนวน",
+                    hole=.64,
+                    color="ประเภทใบเบิก",
+                    color_discrete_map={
+                        "ใบเบิกปกติ": "#28d7a0",
+                        "ใบเบิกเย็น": "#ff667d",
+                    },
+                )
+                fig.update_traces(
+                    textinfo="label+percent",
+                    textposition="inside",
+                    hovertemplate="%{label}<br>%{value} JOB (%{percent})<extra></extra>",
+                )
+                fig.update_layout(
+                    height=340,
+                    margin=dict(l=10, r=10, t=20, b=10),
+                    paper_bgcolor="#151f32",
+                    plot_bgcolor="#151f32",
+                    font_color="#edf3ff",
+                    legend_title_text="",
+                )
+                return fig
+
+            render_plotly_or_info(
+                mix, ["ประเภทใบเบิก", "จำนวน"], donut_chart, "dashboard_donut_chart"
+            )
+
+        with chart_right:
+            st.markdown("#### 🕒 ใบเบิกตามชั่วโมง")
+            hourly = pd.DataFrame()
+            if "received_at" in filtered.columns:
+                source = filtered.dropna(subset=["received_at"])
+                if not source.empty:
+                    hourly = (
+                        source.assign(ชั่วโมง=source["received_at"].dt.hour)
+                        .groupby("ชั่วโมง", as_index=False)
+                        .size()
+                        .rename(columns={"size": "จำนวน JOB"})
+                    )
+                    if not hourly.empty:
+                        hourly = (
+                            hourly.set_index("ชั่วโมง")
+                            .reindex(range(24), fill_value=0)
+                            .rename_axis("ชั่วโมง")
+                            .reset_index()
+                        )
+
+            def hourly_chart(frame):
+                fig = px.bar(
+                    frame,
+                    x="ชั่วโมง",
+                    y="จำนวน JOB",
+                    color="จำนวน JOB",
+                    color_continuous_scale=["#29486d", "#579bff"],
+                )
+                fig.update_layout(
+                    height=340,
+                    margin=dict(l=10, r=10, t=20, b=10),
+                    plot_bgcolor="#151f32",
+                    paper_bgcolor="#151f32",
+                    font_color="#edf3ff",
+                    coloraxis_showscale=False,
+                )
+                fig.update_xaxes(dtick=1, title="ชั่วโมงที่รับใบเบิก")
+                fig.update_yaxes(title="จำนวน JOB", rangemode="tozero")
+                return fig
+
+            render_plotly_or_info(
+                hourly, ["ชั่วโมง", "จำนวน JOB"], hourly_chart, "dashboard_hourly_chart"
+            )
+
+        st.markdown("#### 📋 รายการใบเบิก")
+        display_table(filtered, "dashboard_table")
+
+
+# ── หน้า 2: บันทึกใบเบิก ─────────────────────────────────────────────────────
+elif page == "📝 บันทึกใบเบิก":
     heading("บันทึกใบเบิก", "วางหรือกรอกเลข JOB พร้อมบันทึกเวลารับเอกสาร")
     st.caption(
-        f"Cut-off เวลา {CUTOFF_TIME.strftime('%H:%M')} น. "
-        "ใบเบิกหลังเวลานี้จะถูกติดแท็กใบเบิกเย็น"
+        f"Cut-off {CUTOFF_TIME.strftime('%H:%M')} น. · "
+        "ระบบติดแท็กใบเบิกเย็นเมื่อรับเอกสารหลังเวลานี้"
     )
 
     current = now_bangkok()
@@ -856,7 +1076,7 @@ if page == "📝 บันทึกใบเบิก":
     if "last_production_line" not in st.session_state:
         st.session_state["last_production_line"] = "L1"
 
-    default_col, default_line_col = st.columns(2)
+    default_col, line_col = st.columns(2)
     with default_col:
         default_department = st.selectbox(
             "แผนกเริ่มต้นสำหรับรายการที่วาง",
@@ -865,13 +1085,10 @@ if page == "📝 บันทึกใบเบิก":
             accept_new_options=True,
         )
     default_line = ""
-    with default_line_col:
+    with line_col:
         if default_department == "PD":
-            last_line = st.session_state.get("last_production_line", "L1")
-            line_index = (
-                PRODUCTION_LINES.index(last_line)
-                if last_line in PRODUCTION_LINES else 0
-            )
+            saved_line = st.session_state.get("last_production_line", "L1")
+            line_index = PRODUCTION_LINES.index(saved_line) if saved_line in PRODUCTION_LINES else 0
             default_line = st.selectbox(
                 "ไลน์ผลิตเริ่มต้น (PD)",
                 PRODUCTION_LINES,
@@ -883,13 +1100,13 @@ if page == "📝 บันทึกใบเบิก":
 
     st.markdown("#### 📋 Bulk Copy-Paste")
     st.caption(
-        "วาง JOB ทีละบรรทัด หรือวางข้อมูลจาก Excel แบบ Tab-separated: "
+        "วาง JOB ทีละบรรทัด หรือวางจาก Excel แบบ Tab-separated: "
         "เลข JOB / แผนก / รายการสินค้า / จำนวน / ไลน์ผลิต"
     )
     bulk_text = st.text_area(
         "รายการ JOB",
-        height=160,
-        placeholder="JOB-6901\nJOB-6902\n\nหรือวางข้อมูลหลายคอลัมน์จาก Excel",
+        height=150,
+        placeholder="JOB-6901\nJOB-6902\n\nหรือวางหลายคอลัมน์จาก Excel",
         key="bulk_job_text",
     )
 
@@ -917,17 +1134,13 @@ if page == "📝 บันทึกใบเบิก":
             key=f"manual_department_{index}",
             accept_new_options=True,
         )
-
         if dept == "PD":
-            selected_line = st.session_state.get("last_production_line", "L1")
-            selected_index = (
-                PRODUCTION_LINES.index(selected_line)
-                if selected_line in PRODUCTION_LINES else 0
-            )
+            last_line = st.session_state.get("last_production_line", "L1")
+            line_index = PRODUCTION_LINES.index(last_line) if last_line in PRODUCTION_LINES else 0
             line = cols[2].selectbox(
                 "ไลน์ผลิต",
                 PRODUCTION_LINES,
-                index=selected_index,
+                index=line_index,
                 key=f"manual_line_{index}",
             )
         else:
@@ -936,8 +1149,7 @@ if page == "📝 บันทึกใบเบิก":
 
         item = cols[3].text_input("รายการสินค้า", key=f"manual_item_{index}")
         quantity = cols[4].number_input(
-            "จำนวน", min_value=0, value=0, step=1,
-            key=f"manual_quantity_{index}",
+            "จำนวน", min_value=0, value=0, step=1, key=f"manual_quantity_{index}"
         )
         manual_rows.append((job, dept, line, item, quantity))
 
@@ -976,7 +1188,7 @@ if page == "📝 บันทึกใบเบิก":
                 if len(parts) > 3:
                     try:
                         quantity = int(float(parts[3].replace(",", "")))
-                    except (TypeError, ValueError):
+                    except (ValueError, TypeError):
                         quantity = 0
 
                 pasted_line = parts[4] if len(parts) > 4 else ""
@@ -996,11 +1208,9 @@ if page == "📝 บันทึกใบเบิก":
                 for job, dept, line, item, quantity in entries:
                     dept = str(dept).strip()
                     line_to_save = line if dept == "PD" else ""
-
                     if dept == "PD" and line_to_save not in PRODUCTION_LINES:
                         errors.append(f"JOB {job}: กรุณาเลือกไลน์ผลิต L1-L10")
                         continue
-
                     try:
                         ok, message = insert_requisition(
                             str(job).strip(),
@@ -1026,132 +1236,16 @@ if page == "📝 บันทึกใบเบิก":
                     st.rerun()
 
 
-# ── หน้า 2: Dashboard ─────────────────────────────────────────────────────────
-elif page == "📊 Dashboard":
-    heading("Dashboard", "ภาพรวมปริมาณงานและจุดคอขวดของคลังสินค้า")
-    filtered = filter_data(data, "dashboard")
-
-    if filtered.empty:
-        st.info("ยังไม่มีข้อมูลใบเบิก")
-    else:
-        total = len(filtered)
-        today = now_bangkok().date()
-        today_count = int((filtered["received_at"].dt.date == today).sum())
-        pending_count = int(filtered["status"].eq("กำลังจัด").sum())
-        late_count = int(filtered["late"].sum())
-
-        processing_values = filtered["processing_minutes"].dropna().tolist()
-        average_processing = (
-            sum(processing_values) / len(processing_values)
-            if processing_values else 0
-        )
-        waiting_values = filtered["waiting_minutes"].dropna().tolist()
-        average_waiting = (
-            sum(waiting_values) / len(waiting_values)
-            if waiting_values else 0
-        )
-
-        kpis = st.columns(4)
-        kpis[0].metric("ใบเบิกวันนี้", f"{today_count:,}", f"ทั้งหมด {total:,} JOB")
-        kpis[1].metric("งานค้างจัด", f"{pending_count:,}", "JOB")
-        kpis[2].metric("เวลาจัดเฉลี่ย", format_duration(average_processing))
-        kpis[3].metric("เวลารอรับเฉลี่ย", format_duration(average_waiting))
-
-        left, right = st.columns(2)
-
-        with left:
-            st.markdown("#### 🕒 จำนวนใบเบิกตามชั่วโมง")
-            hourly = pd.DataFrame()
-            if "received_at" in filtered.columns:
-                source = filtered.dropna(subset=["received_at"])
-                if not source.empty:
-                    hourly = (
-                        source.assign(ชั่วโมง=source["received_at"].dt.hour)
-                        .groupby("ชั่วโมง", as_index=False)
-                        .size()
-                        .rename(columns={"size": "จำนวน JOB"})
-                    )
-                    if not hourly.empty:
-                        hourly = (
-                            hourly.set_index("ชั่วโมง")
-                            .reindex(range(24), fill_value=0)
-                            .rename_axis("ชั่วโมง")
-                            .reset_index()
-                        )
-
-            def hourly_chart(frame):
-                fig = px.bar(
-                    frame, x="ชั่วโมง", y="จำนวน JOB", color="จำนวน JOB",
-                    color_continuous_scale=["#bae6fd", "#0284c7"],
-                )
-                fig.update_layout(
-                    height=330, margin=dict(l=10, r=10, t=20, b=10),
-                    plot_bgcolor="white", paper_bgcolor="white",
-                    coloraxis_showscale=False,
-                )
-                fig.update_xaxes(dtick=1, title="ชั่วโมงที่รับใบเบิก")
-                fig.update_yaxes(title="จำนวน JOB", rangemode="tozero")
-                return fig
-
-            render_plotly_or_info(
-                hourly, ["ชั่วโมง", "จำนวน JOB"], hourly_chart, "arrival_hour_chart"
-            )
-
-        with right:
-            st.markdown("#### 🍩 สัดส่วนใบเบิกปกติและใบเบิกเย็น")
-            late_count = int(filtered["late"].sum())
-            normal_count = max(total - late_count, 0)
-            mix = pd.DataFrame(
-                {
-                    "ประเภทใบเบิก": ["ใบเบิกปกติ", "ใบเบิกเย็น"],
-                    "จำนวน": [normal_count, late_count],
-                }
-            )
-
-            def requisition_pie(frame):
-                fig = px.pie(
-                    frame,
-                    names="ประเภทใบเบิก",
-                    values="จำนวน",
-                    hole=.62,
-                    color="ประเภทใบเบิก",
-                    color_discrete_map={
-                        "ใบเบิกปกติ": "#10b981",
-                        "ใบเบิกเย็น": "#ef4444",
-                    },
-                )
-                fig.update_traces(
-                    textinfo="label+percent",
-                    textposition="inside",
-                    hovertemplate="%{label}<br>%{value} JOB (%{percent})<extra></extra>",
-                )
-                fig.update_layout(
-                    height=330, margin=dict(l=10, r=10, t=20, b=10),
-                    paper_bgcolor="white", legend_title_text="",
-                )
-                return fig
-
-            render_plotly_or_info(
-                mix,
-                ["ประเภทใบเบิก", "จำนวน"],
-                requisition_pie,
-                "requisition_type_donut",
-            )
-
-        st.markdown("#### 📌 รายการในช่วงที่เลือก")
-        display_table(filtered, "dashboard_table")
-
-
-# ── หน้า 3: จัดการและอัปเดตสถานะ ────────────────────────────────────────────
-elif page == "✏️ จัดการ / อัปเดตสถานะ":
-    heading("จัดการและอัปเดตสถานะ", "ลงเวลาจัดเสร็จ PD รับสินค้า หรือยกเลิก JOB")
+# ── หน้า 3: จัดการสถานะ ──────────────────────────────────────────────────────
+elif page == "⚙️ จัดการสถานะ":
+    heading("จัดการสถานะ", "อัปเดตเวลาจัดเสร็จ เวลารับสินค้า หรือยกเลิก JOB")
     active = data[data["status"] != "ยกเลิก"] if not data.empty else data
 
     if active.empty:
         st.info("ยังไม่มีข้อมูลใบเบิกให้จัดการ")
     else:
-        ids = active["id"].tolist()
-        labels = {
+        job_ids = active["id"].tolist()
+        job_labels = {
             int(row["id"]): (
                 f'{row["job_number"]} · {row["department"] or "ไม่ระบุ"} · '
                 f'{job_status(row)}'
@@ -1160,8 +1254,8 @@ elif page == "✏️ จัดการ / อัปเดตสถานะ":
         }
         selected_id = st.selectbox(
             "เลือก JOB",
-            ids,
-            format_func=lambda value: labels[int(value)],
+            job_ids,
+            format_func=lambda value: job_labels[int(value)],
             key="manage_selected_job",
         )
         record = active[active["id"] == selected_id].iloc[0]
@@ -1169,7 +1263,7 @@ elif page == "✏️ จัดการ / อัปเดตสถานะ":
 
         st.markdown(
             f'<div class="section-card"><b>JOB {html.escape(str(record["job_number"]))}</b>'
-            f'　·　แผนก {html.escape(str(record["department"] or "ไม่ระบุ"))}'
+            f'　·　{html.escape(str(record["department"] or "ไม่ระบุ"))}'
             f'　·　{job_status(record)}</div>',
             unsafe_allow_html=True,
         )
@@ -1189,7 +1283,7 @@ elif page == "✏️ จัดการ / อัปเดตสถานะ":
         handover_date_key = f"handover_date_{job_key}"
         handover_time_key = f"handover_time_{job_key}"
 
-        # ค่าเริ่มต้นถูกกำหนดก่อนสร้าง widget และคงค่าที่ผู้ใช้แก้ไว้
+        # ตั้งค่าเริ่มต้นก่อนสร้าง widgets และไม่เขียนทับค่าที่ผู้ใช้แก้
         if picked_enabled_key not in st.session_state:
             st.session_state[picked_enabled_key] = pd.notna(record["picked_at"])
         if handover_enabled_key not in st.session_state:
@@ -1203,25 +1297,31 @@ elif page == "✏️ จัดการ / อัปเดตสถานะ":
         if handover_time_key not in st.session_state:
             st.session_state[handover_time_key] = record_time(record["handover_at"])
 
-        col1, col2 = st.columns(2)
-        with col1:
+        left, right = st.columns(2)
+        with left:
             st.markdown("#### 📦 เวลาจัดเสร็จ")
-            st.checkbox("บันทึกเวลาจัดเสร็จแล้ว", key=picked_enabled_key)
+            st.checkbox(
+                "บันทึกเวลาจัดเสร็จแล้ว",
+                key=picked_enabled_key,
+            )
             st.button(
                 "⏱️ ลงเวลาปัจจุบัน",
-                key=f"auto_picked_button_{job_key}",
+                key=f"auto_picked_{job_key}",
                 on_click=set_timestamp,
                 args=(picked_date_key, picked_time_key, picked_enabled_key),
             )
             picked_date = st.date_input("วันที่จัดเสร็จ", key=picked_date_key)
             picked_time = st.time_input("เวลาจัดเสร็จ", key=picked_time_key)
 
-        with col2:
+        with right:
             st.markdown("#### 🟢 PD มารับสินค้า")
-            st.checkbox("บันทึกเวลาที่ PD รับแล้ว", key=handover_enabled_key)
+            st.checkbox(
+                "บันทึกเวลาที่ PD รับแล้ว",
+                key=handover_enabled_key,
+            )
             st.button(
                 "⏱️ ลงเวลาปัจจุบัน",
-                key=f"auto_handover_button_{job_key}",
+                key=f"auto_handover_{job_key}",
                 on_click=set_timestamp,
                 args=(handover_date_key, handover_time_key, handover_enabled_key),
             )
@@ -1239,19 +1339,15 @@ elif page == "✏️ จัดการ / อัปเดตสถานะ":
         )
 
         if picked_at:
-            st.caption(
-                "เวลาจัด: " + format_duration(duration_minutes(received_at, picked_at))
-            )
+            st.caption("เวลาจัด: " + format_duration(duration_minutes(received_at, picked_at)))
         if picked_at and handover_at:
-            st.caption(
-                "เวลารอ PD: " + format_duration(duration_minutes(picked_at, handover_at))
-            )
+            st.caption("เวลารอ PD: " + format_duration(duration_minutes(picked_at, handover_at)))
 
         if st.button(
             "💾 บันทึกการอัปเดตสถานะ",
             type="primary",
             use_container_width=True,
-            key=f"save_status_button_{job_key}",
+            key=f"save_status_{job_key}",
         ):
             if handover_at and not picked_at:
                 st.error("กรุณาระบุเวลาจัดเสร็จก่อนเวลาที่ PD มารับ")
@@ -1282,7 +1378,6 @@ elif page == "✏️ จัดการ / อัปเดตสถานะ":
             department_options = DEPARTMENTS.copy()
             if old_department not in department_options:
                 department_options.insert(0, old_department)
-
             edit_department = st.selectbox(
                 "แผนก",
                 department_options,
@@ -1302,12 +1397,13 @@ elif page == "✏️ จัดการ / อัปเดตสถานะ":
                     "ไลน์ผลิต (จำเป็นสำหรับ PD)",
                     PRODUCTION_LINES,
                     index=line_index,
-                    key=f"edit_production_line_{job_key}",
+                    key=f"edit_line_{job_key}",
                 )
 
             edit_item = st.text_input(
-                "รายการ", value=str(record["item_name"] or ""),
-                key=f"edit_item_name_{job_key}",
+                "รายการสินค้า",
+                value=str(record["item_name"] or ""),
+                key=f"edit_item_{job_key}",
             )
             edit_quantity = st.number_input(
                 "จำนวน",
@@ -1317,10 +1413,7 @@ elif page == "✏️ จัดการ / อัปเดตสถานะ":
                 key=f"edit_quantity_{job_key}",
             )
 
-            if st.button(
-                "บันทึกการแก้ไขรายละเอียด",
-                key=f"save_edit_button_{job_key}",
-            ):
+            if st.button("บันทึกการแก้ไข", key=f"save_edit_{job_key}"):
                 line_to_save = edit_line if edit_department == "PD" else ""
                 try:
                     update_requisition(
@@ -1368,38 +1461,50 @@ elif page == "✏️ จัดการ / อัปเดตสถานะ":
                     st.error(f"ยกเลิกไม่สำเร็จ: {error}")
 
 
-# ── หน้า 4: ประวัติและส่งออก ─────────────────────────────────────────────────
-elif page == "📋 ประวัติ & Export":
-    heading("ประวัติและส่งออกข้อมูล", "ค้นหา JOB ดาวน์โหลด Excel และเปิด Timeline")
+# ── หน้า 4: ประวัติ รายงาน และตั้งค่า ────────────────────────────────────────
+elif page == "📄 ประวัติ / Reports":
+    heading("ประวัติและรายงาน", "ค้นหาใบเบิก ดาวน์โหลดไฟล์ และดูหลักฐาน Timeline")
     history = filter_data(data, "history")
 
     if history.empty:
         st.info("ยังไม่มีข้อมูลใบเบิก")
     else:
         display_table(history, "history_table")
-        st.download_button(
-            "📥 ดาวน์โหลด Excel (.xlsx)",
-            data=make_excel(history),
-            file_name="รายงานสรุปการเบิกสินค้า_คลังสินค้า.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            key="download_excel_button",
-        )
+
+        export_col1, export_col2 = st.columns(2)
+        with export_col1:
+            st.download_button(
+                "📥 ดาวน์โหลด Excel (.xlsx)",
+                data=make_excel(history),
+                file_name="รายงานสรุปการเบิกสินค้า_คลังสินค้า.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key="download_excel",
+            )
+        with export_col2:
+            st.download_button(
+                "📄 ดาวน์โหลด CSV",
+                data=make_csv(history),
+                file_name="รายงานสรุปการเบิกสินค้า_คลังสินค้า.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="download_csv",
+            )
 
         eligible = history[
             history["late"].fillna(False) | history["status"].eq("ยกเลิก")
         ]
         if not eligible.empty:
             st.markdown("#### 📄 พิมพ์หลักฐาน / สรุป Timeline")
-            st.caption("มีปุ่ม Timeline สำหรับ JOB ใบเบิกเย็นหรือถูกยกเลิก")
+            st.caption("ปุ่มนี้แสดงสำหรับ JOB ใบเบิกเย็นหรือรายการที่ถูกยกเลิก")
             for _, row in eligible.iterrows():
                 record_id = int(row["id"])
-                label = (
+                button_label = (
                     f'📄 เปิด Timeline · {row["job_number"]} · '
                     f'{row["department"] or "ไม่ระบุ"}'
                 )
                 if st.button(
-                    label,
+                    button_label,
                     key=f"timeline_button_{record_id}",
                     use_container_width=True,
                 ):
@@ -1411,11 +1516,16 @@ elif page == "📋 ประวัติ & Export":
             if not timeline_rows.empty:
                 show_timeline_dialog(timeline_rows.iloc[0].to_dict())
 
-        st.caption(f"แสดง {len(history):,} รายการ")
+    with st.expander("⚙️ ตั้งค่าระบบ"):
+        st.markdown("### SMART WAREHOUSE")
+        st.write("เวอร์ชันระบบ: **1.0**")
+        st.write(f"Cut-off ใบเบิก: **{CUTOFF_TIME.strftime('%H:%M')} น.**")
+        st.write("เขตเวลา: **Asia/Bangkok (UTC+7)**")
+        st.write(f"ผู้ใช้งานปัจจุบัน: **{DISPLAY_NAME}**")
+        st.write("ฐานข้อมูล: **SQLite**")
 
 
 st.markdown(
-    "<div style='text-align:center;color:#94a3b8;padding:1.5rem 0 0'>"
-    "Warehouse Flow · เวลาอ้างอิง Asia/Bangkok · ผู้ใช้งาน Admin</div>",
+    '<div class="footer">SMART WAREHOUSE © 2026 | BUSINESS MANAGEMENT SYSTEM</div>',
     unsafe_allow_html=True,
 )
