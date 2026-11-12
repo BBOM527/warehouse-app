@@ -52,10 +52,10 @@ st.markdown(
     @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
 
     :root {
-        --bg:#f8fafc; --bg-soft:#f1f5f9; --card:#fff; --border:#e2e8f0;
-        --ink:#1e293b; --ink-strong:#0f172a; --muted:#64748b;
-        --blue:#2563eb; --green:#16a34a; --red:#dc2626; --orange:#d97706;
-        --yellow:#ca8a04;
+        --bg:#f8fafc; --bg-soft:#f1f5f9; --card:#ffffff;
+        --border:#e2e8f0; --ink:#1e293b; --ink-strong:#0f172a;
+        --muted:#64748b; --blue:#2563eb; --green:#16a34a;
+        --red:#dc2626; --orange:#d97706; --yellow:#ca8a04;
     }
     html, body, [class*="css"], [data-testid="stAppViewContainer"] {
         font-family:'Prompt',sans-serif; color:var(--ink);
@@ -73,20 +73,21 @@ st.markdown(
     }
     [data-testid="stMetricLabel"] { color:var(--muted); }
     [data-testid="stMetricValue"] { color:var(--ink-strong); font-weight:600; }
-    [data-testid="stForm"],[data-testid="stExpander"],[data-testid="stDataFrame"],
-    [data-testid="stTable"],[data-testid="stVerticalBlockBorderWrapper"],
+
+    [data-testid="stForm"], [data-testid="stExpander"], [data-testid="stDataFrame"],
+    [data-testid="stTable"], [data-testid="stVerticalBlockBorderWrapper"],
     [data-testid="stDialog"] {
         background:#fff; border:1px solid var(--border); border-radius:12px;
         box-shadow:0 10px 30px rgba(15,23,42,.05); overflow:hidden;
     }
-    [data-testid="stTextInput"] input,[data-testid="stNumberInput"] input,
-    [data-testid="stDateInput"] input,[data-testid="stTimeInput"] input,
+    [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
+    [data-testid="stDateInput"] input, [data-testid="stTimeInput"] input,
     [data-testid="stTextArea"] textarea,
     [data-testid="stSelectbox"] [data-baseweb="select"]>div {
         background:#fff; color:var(--ink); border:1px solid var(--border);
         border-radius:10px;
     }
-    [data-testid="stButton"] button,[data-testid="stFormSubmitButton"] button,
+    [data-testid="stButton"] button, [data-testid="stFormSubmitButton"] button,
     [data-testid="stDownloadButton"] button {
         border-radius:10px; font-family:'Prompt',sans-serif; font-weight:500;
         transition:transform .18s ease,box-shadow .18s ease,filter .18s ease;
@@ -125,7 +126,7 @@ st.markdown(
     }
     .clock-time { font-size:1.1rem; font-weight:600; color:var(--green); }
     .clock-date { color:var(--muted); font-size:.9rem; }
-    .section-card,.timeline-card {
+    .section-card, .timeline-card {
         background:#fff; border:1px solid var(--border); border-radius:12px;
         padding:18px 20px; box-shadow:0 10px 25px rgba(15,23,42,.05);
         margin-bottom:1rem;
@@ -135,7 +136,7 @@ st.markdown(
         margin:0 0 8px 4px; color:var(--ink);
     }
     .timeline-step.start { border-left-color:var(--yellow); }
-    .timeline-step.done { border-left-color:var(--green); }
+    .timeline-step.finish { border-left-color:var(--green); }
     .timeline-step.danger { border-left-color:var(--red); }
     .timeline-time { color:#166534; font-weight:600; }
     .login-card {
@@ -153,7 +154,7 @@ st.markdown(
 )
 
 
-# ── Helpers: ประกาศไว้ก่อนเรียกใช้งานทุกหน้า ─────────────────────────────────
+# ── Helper functions: ประกาศก่อนเรียกใช้ทุกหน้า ──────────────────────────────
 def heading(title, subtitle):
     st.markdown(
         f"""
@@ -219,28 +220,26 @@ def format_duration(value):
 def job_status(row):
     if str(row.get("status", "")) == "ยกเลิก":
         return "🔴 ยกเลิก"
-    if pd.notna(row.get("handover_at")):
-        return "🟢 รับของแล้ว"
-    if pd.notna(row.get("picked_at")):
-        return "🔵 จัดเสร็จรอ PD"
+    if pd.notna(row.get("finish_pick_time")):
+        return "🟢 จัดเสร็จเรียบร้อย"
     if pd.notna(row.get("start_pick_time")):
         return "🟡 กำลังจัด"
     return "🟠 รอจัด"
 
 
 def filter_data(df, page_type):
-    """กรองตามคำค้นหาและช่วงวันที่ โดยแยก widget key ตามหน้าที่เรียก."""
+    """กรองตามคำค้นหาและช่วงวันที่ โดยแยก widget keys ตามหน้า."""
     prefix = str(page_type).strip().lower().replace(" ", "_")
-    left, right = st.columns([1.4, 1])
+    search_col, period_col = st.columns([1.4, 1])
 
-    with left:
+    with search_col:
         query = st.text_input(
             "🔎 ค้นหา JOB / สินค้า / แผนก / ไลน์",
             key=f"{prefix}_search",
             placeholder="พิมพ์คำค้นหา…",
         ).strip().lower()
 
-    with right:
+    with period_col:
         period = st.selectbox(
             "ช่วงวันที่",
             ["ทั้งหมด", "วันนี้", "สัปดาห์นี้", "เลือกช่วงวันที่"],
@@ -249,27 +248,24 @@ def filter_data(df, page_type):
 
     today = now_bangkok().date()
     start_date = end_date = None
-
     if period == "วันนี้":
         start_date = end_date = today
     elif period == "สัปดาห์นี้":
         start_date = today - timedelta(days=today.weekday())
         end_date = today
     elif period == "เลือกช่วงวันที่":
-        date_range = st.date_input(
+        selected_range = st.date_input(
             "วันที่เริ่มต้นและสิ้นสุด",
             value=(today - timedelta(days=6), today),
             key=f"{prefix}_date_range",
         )
-        if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
-            start_date, end_date = date_range
+        if isinstance(selected_range, (tuple, list)) and len(selected_range) == 2:
+            start_date, end_date = selected_range
 
     result = df.copy()
     if start_date and end_date and not result.empty:
-        received_dates = result["received_at"].dt.date
-        result = result[
-            (received_dates >= start_date) & (received_dates <= end_date)
-        ]
+        dates = result["received_at"].dt.date
+        result = result[(dates >= start_date) & (dates <= end_date)]
 
     if query and not result.empty:
         searchable = (
@@ -283,9 +279,13 @@ def filter_data(df, page_type):
     return result
 
 
-# ── SQLite และ Auto Schema Update ─────────────────────────────────────────────
+# ── SQLite: Auto Schema Update และตัดคอลัมน์ PD ออกจาก schema ────────────────
 def init_db():
-    columns_to_add = {
+    """
+    เพิ่มคอลัมน์ใหม่ให้ตารางเดิมด้วย ALTER TABLE จากนั้นย้ายเฉพาะคอลัมน์
+    ฝั่งคลังไป schema ใหม่ จึงไม่เหลือคอลัมน์เวลารอ/เวลารับ PD ในตารางจริง
+    """
+    definitions = {
         "id": "INTEGER",
         "job_number": "TEXT NOT NULL DEFAULT ''",
         "department": "TEXT NOT NULL DEFAULT ''",
@@ -295,10 +295,7 @@ def init_db():
         "quantity": "REAL",
         "received_at": "TEXT",
         "start_pick_time": "TEXT",
-        "started_at": "TEXT",
-        "picked_at": "TEXT",
-        "completed_at": "TEXT",
-        "handover_at": "TEXT",
+        "finish_pick_time": "TEXT",
         "cancelled_at": "TEXT",
         "cancelled_by": "TEXT",
         "cancel_reason": "TEXT",
@@ -306,6 +303,7 @@ def init_db():
         "created_by": "TEXT NOT NULL DEFAULT 'Admin'",
         "updated_at": "TEXT",
     }
+    canonical_columns = set(definitions)
 
     with sqlite3.connect(DB_PATH, timeout=30) as conn:
         conn.execute("PRAGMA busy_timeout = 30000")
@@ -321,10 +319,7 @@ def init_db():
                 quantity REAL,
                 received_at TEXT,
                 start_pick_time TEXT,
-                started_at TEXT,
-                picked_at TEXT,
-                completed_at TEXT,
-                handover_at TEXT,
+                finish_pick_time TEXT,
                 cancelled_at TEXT,
                 cancelled_by TEXT,
                 cancel_reason TEXT,
@@ -335,32 +330,51 @@ def init_db():
             """
         )
 
-        existing = {
+        columns = {
             row[1] for row in conn.execute("PRAGMA table_info(requisitions)").fetchall()
         }
-        for name, definition in columns_to_add.items():
-            if name not in existing:
+        for name, definition in definitions.items():
+            if name not in columns:
                 conn.execute(
                     f'ALTER TABLE requisitions ADD COLUMN "{name}" {definition}'
                 )
 
-        existing = {
+        columns = {
             row[1] for row in conn.execute("PRAGMA table_info(requisitions)").fetchall()
         }
+
+        # โอนข้อมูลจาก schema รุ่นเก่า ก่อนปรับตารางให้เหลือเฉพาะฟิลด์คลัง
         aliases = {
             "job_number": ("job_id", "job_no", "requisition_no"),
             "department": ("dept",),
             "line": ("production_line",),
             "received_at": ("received_time", "created_at"),
             "start_pick_time": ("started_at", "start_time"),
-            "picked_at": ("completed_at", "completed_time", "picked_time"),
-            "handover_at": ("handover_time",),
+            "finish_pick_time": (
+                "finish_time", "picked_at", "completed_at", "completed_time", "picked_time"
+            ),
             "status": ("current_status",),
             "item_name": ("item", "product_name"),
         }
         for target, sources in aliases.items():
             for source in sources:
-                if target in existing and source in existing and target != source:
+                if target in columns and source in columns and target != source:
+                    conn.execute(
+                        f"""
+                        UPDATE requisitions SET "{target}"="{source}"
+                        WHERE ("{target}" IS NULL OR "{target}"='')
+                          AND "{source}" IS NOT NULL AND "{source}"!=''
+                        """
+                    )
+
+        # ย้ายชื่อเก่าไปชื่อปัจจุบันในกรณีที่คอลัมน์เก่ายังมีค่า
+        for target, sources in {
+            "cancelled_by": ("cancel_by", "canceled_by"),
+            "cancel_reason": ("cancellation_reason", "canceled_reason"),
+            "cancelled_at": ("canceled_at", "cancel_time"),
+        }.items():
+            for source in sources:
+                if target in columns and source in columns:
                     conn.execute(
                         f"""
                         UPDATE requisitions SET "{target}"="{source}"
@@ -383,28 +397,6 @@ def init_db():
               AND line IS NOT NULL AND line!=''
             """
         )
-        conn.execute(
-            """
-            UPDATE requisitions SET started_at=start_pick_time
-            WHERE (started_at IS NULL OR started_at='')
-              AND start_pick_time IS NOT NULL AND start_pick_time!=''
-            """
-        )
-        conn.execute(
-            """
-            UPDATE requisitions SET picked_at=completed_at
-            WHERE (picked_at IS NULL OR picked_at='')
-              AND completed_at IS NOT NULL AND completed_at!=''
-            """
-        )
-        conn.execute(
-            """
-            UPDATE requisitions SET completed_at=picked_at
-            WHERE (completed_at IS NULL OR completed_at='')
-              AND picked_at IS NOT NULL AND picked_at!=''
-            """
-        )
-
         conn.execute("UPDATE requisitions SET id=rowid WHERE id IS NULL")
         conn.execute(
             """
@@ -419,9 +411,64 @@ def init_db():
             """,
             (now_bangkok().isoformat(),),
         )
+
+        # ปรับสถานะเก่าที่เกี่ยวกับ PD ให้เป็นสถานะจบงานฝั่งคลัง
         conn.execute(
-            "UPDATE requisitions SET status='รอจัด' WHERE status IS NULL OR status=''"
+            """
+            UPDATE requisitions
+            SET status = CASE
+                WHEN status='ยกเลิก' OR cancelled_at IS NOT NULL THEN 'ยกเลิก'
+                WHEN finish_pick_time IS NOT NULL AND finish_pick_time!=''
+                    THEN 'จัดเสร็จเรียบร้อย'
+                WHEN start_pick_time IS NOT NULL AND start_pick_time!=''
+                    THEN 'กำลังจัด'
+                ELSE 'รอจัด'
+            END
+            """
         )
+
+        # Rebuild ตารางเมื่อพบคอลัมน์เก่า เช่น handover_at / waiting_minutes
+        # โดยคัดลอกเฉพาะคอลัมน์ที่อยู่ใน schema ฝั่งคลังเท่านั้น
+        if columns != canonical_columns:
+            conn.execute("DROP TABLE IF EXISTS requisitions__new")
+            conn.execute(
+                """
+                CREATE TABLE requisitions__new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_number TEXT NOT NULL DEFAULT '',
+                    department TEXT NOT NULL DEFAULT '',
+                    line TEXT NOT NULL DEFAULT '',
+                    production_line TEXT NOT NULL DEFAULT '',
+                    item_name TEXT NOT NULL DEFAULT '',
+                    quantity REAL,
+                    received_at TEXT,
+                    start_pick_time TEXT,
+                    finish_pick_time TEXT,
+                    cancelled_at TEXT,
+                    cancelled_by TEXT,
+                    cancel_reason TEXT,
+                    status TEXT NOT NULL DEFAULT 'รอจัด',
+                    created_by TEXT NOT NULL DEFAULT 'Admin',
+                    updated_at TEXT
+                )
+                """
+            )
+            copy_columns = [
+                "id", "job_number", "department", "line", "production_line",
+                "item_name", "quantity", "received_at", "start_pick_time",
+                "finish_pick_time", "cancelled_at", "cancelled_by",
+                "cancel_reason", "status", "created_by", "updated_at",
+            ]
+            column_sql = ", ".join(f'"{name}"' for name in copy_columns)
+            conn.execute(
+                f"""
+                INSERT INTO requisitions__new ({column_sql})
+                SELECT {column_sql} FROM requisitions
+                """
+            )
+            conn.execute("DROP TABLE requisitions")
+            conn.execute("ALTER TABLE requisitions__new RENAME TO requisitions")
+
         conn.commit()
 
 
@@ -431,10 +478,9 @@ def load_data():
         conn.execute("PRAGMA busy_timeout = 30000")
         data = pd.read_sql_query(
             """
-            SELECT id, job_number, department, line, production_line, item_name,
-                   quantity, received_at, start_pick_time, started_at, picked_at,
-                   completed_at, handover_at, cancelled_at, cancelled_by,
-                   cancel_reason, status, created_by, updated_at
+            SELECT id, job_number, department, line, item_name, quantity,
+                   received_at, start_pick_time, finish_pick_time, cancelled_at,
+                   cancelled_by, cancel_reason, status, created_by, updated_at
             FROM requisitions
             ORDER BY received_at DESC, id DESC
             """,
@@ -442,34 +488,28 @@ def load_data():
         )
 
     if not data.empty:
+        # ข้อมูลไลน์จะมีค่าได้เฉพาะแผนก PD เท่านั้น
         data["line"] = data["line"].fillna("")
-        empty_line = data["line"].eq("")
-        data.loc[empty_line, "line"] = data.loc[
-            empty_line, "production_line"
-        ].fillna("")
-        data["start_pick_time"] = data["start_pick_time"].where(
-            data["start_pick_time"].notna() & data["start_pick_time"].ne(""),
-            data["started_at"],
-        )
-        data["picked_at"] = data["picked_at"].where(
-            data["picked_at"].notna() & data["picked_at"].ne(""),
-            data["completed_at"],
-        )
+        data.loc[data["department"] != "PD", "line"] = ""
 
         for column in (
-            "received_at", "start_pick_time", "started_at", "picked_at",
-            "handover_at", "cancelled_at", "updated_at",
+            "received_at", "start_pick_time", "finish_pick_time",
+            "cancelled_at", "updated_at",
         ):
             data[column] = pd.to_datetime(
                 data[column], errors="coerce", utc=True
             ).dt.tz_convert("Asia/Bangkok")
 
-        data["processing_minutes"] = data.apply(
-            lambda row: duration_minutes(row["received_at"], row["picked_at"]),
+        data["waiting_start_minutes"] = data.apply(
+            lambda row: duration_minutes(row["received_at"], row["start_pick_time"]),
             axis=1,
         )
-        data["waiting_minutes"] = data.apply(
-            lambda row: duration_minutes(row["picked_at"], row["handover_at"]),
+        data["picking_minutes"] = data.apply(
+            lambda row: duration_minutes(row["start_pick_time"], row["finish_pick_time"]),
+            axis=1,
+        )
+        data["warehouse_total_minutes"] = data.apply(
+            lambda row: duration_minutes(row["received_at"], row["finish_pick_time"]),
             axis=1,
         )
         data["late"] = data["received_at"].apply(
@@ -519,7 +559,7 @@ def insert_requisition(job_number, department, line, item_name, quantity, receiv
 
 def update_requisition(
     record_id, department, line, item_name, quantity,
-    received_at, start_pick_time, picked_at, handover_at,
+    received_at, start_pick_time, finish_pick_time,
 ):
     if department == "PD":
         if line not in PRODUCTION_LINES:
@@ -527,10 +567,8 @@ def update_requisition(
     else:
         line = ""
 
-    if handover_at:
-        status = "รับของแล้ว"
-    elif picked_at:
-        status = "จัดเสร็จรอ PD"
+    if finish_pick_time:
+        status = "จัดเสร็จเรียบร้อย"
     elif start_pick_time:
         status = "กำลังจัด"
     else:
@@ -542,14 +580,13 @@ def update_requisition(
             """
             UPDATE requisitions
             SET department=?, line=?, production_line=?, item_name=?, quantity=?,
-                received_at=?, start_pick_time=?, started_at=?, picked_at=?,
-                completed_at=?, handover_at=?, status=?, updated_at=?
+                received_at=?, start_pick_time=?, finish_pick_time=?,
+                status=?, updated_at=?
             WHERE id=?
             """,
             (
-                department, line, line, item_name, quantity,
-                stamp(received_at), stamp(start_pick_time), stamp(start_pick_time),
-                stamp(picked_at), stamp(picked_at), stamp(handover_at), status,
+                department, line, line, item_name, quantity, stamp(received_at),
+                stamp(start_pick_time), stamp(finish_pick_time), status,
                 stamp(now_bangkok()), record_id,
             ),
         )
@@ -574,7 +611,7 @@ def cancel_requisition(record_id, cancelled_by, reason):
         conn.commit()
 
 
-# ── ตารางและ Export ───────────────────────────────────────────────────────────
+# ── ตาราง รายงาน และกราฟ ─────────────────────────────────────────────────────
 def display_table(data, key):
     if data.empty:
         st.info("ยังไม่มีข้อมูลใบเบิกในเงื่อนไขที่เลือก")
@@ -585,10 +622,10 @@ def display_table(data, key):
     view["แท็ก"] = view["late"].map({True: "🔴 ใบเบิกเย็น", False: "🟢 ปกติ"})
     view["วันเวลาที่เบิก"] = view["received_at"].apply(display_datetime)
     view["เวลาเริ่มจัด"] = view["start_pick_time"].apply(display_datetime)
-    view["เวลาจัดเสร็จ"] = view["picked_at"].apply(display_datetime)
-    view["เวลา PD มารับ"] = view["handover_at"].apply(display_datetime)
-    view["ระยะเวลาจัดสินค้า"] = view["processing_minutes"].apply(format_duration)
-    view["ระยะเวลารอรับสินค้า"] = view["waiting_minutes"].apply(format_duration)
+    view["เวลาจัดเสร็จ"] = view["finish_pick_time"].apply(display_datetime)
+    view["เวลารอเริ่มจัด"] = view["waiting_start_minutes"].apply(format_duration)
+    view["ระยะเวลาจัดสินค้า"] = view["picking_minutes"].apply(format_duration)
+    view["เวลารวมฝั่งคลัง"] = view["warehouse_total_minutes"].apply(format_duration)
 
     labels = {
         "job_number": "เลขที่ Job",
@@ -600,9 +637,9 @@ def display_table(data, key):
         "สถานะปัจจุบัน": "สถานะปัจจุบัน",
         "เวลาเริ่มจัด": "เวลาเริ่มจัด",
         "เวลาจัดเสร็จ": "เวลาจัดเสร็จ",
-        "เวลา PD มารับ": "เวลา PD มารับ",
+        "เวลารอเริ่มจัด": "เวลารอเริ่มจัด",
         "ระยะเวลาจัดสินค้า": "ระยะเวลาจัดสินค้า",
-        "ระยะเวลารอรับสินค้า": "ระยะเวลารอรับสินค้า",
+        "เวลารวมฝั่งคลัง": "เวลารวมฝั่งคลัง",
         "แท็ก": "แท็ก",
     }
     columns = [column for column in labels if column in view.columns]
@@ -626,14 +663,18 @@ def export_dataframe(data):
     )
     result["สถานะปัจจุบัน"] = data.apply(job_status, axis=1)
     result["เวลาเริ่มจัด"] = data["start_pick_time"].apply(display_datetime)
-    result["เวลาจัดเสร็จ"] = data["picked_at"].apply(display_datetime)
-    result["เวลา PD มารับ"] = data["handover_at"].apply(display_datetime)
-    result["ระยะเวลาจัดสินค้า (นาที)"] = data["processing_minutes"].apply(
+    result["เวลาจัดเสร็จ"] = data["finish_pick_time"].apply(display_datetime)
+    result["เวลารอเริ่มจัด (นาที)"] = data["waiting_start_minutes"].apply(
         lambda value: "" if pd.isna(value) else round(float(value), 1)
     )
-    result["ระยะเวลารอรับสินค้า (นาที)"] = data["waiting_minutes"].apply(
+    result["ระยะเวลาจัดสินค้า (นาที)"] = data["picking_minutes"].apply(
         lambda value: "" if pd.isna(value) else round(float(value), 1)
     )
+    result["เวลารวมฝั่งคลัง (นาที)"] = data["warehouse_total_minutes"].apply(
+        lambda value: "" if pd.isna(value) else round(float(value), 1)
+    )
+    result["ผู้สั่งยกเลิก"] = data["cancelled_by"].fillna("").astype(str)
+    result["สาเหตุการยกเลิก"] = data["cancel_reason"].fillna("").astype(str)
     return result
 
 
@@ -641,8 +682,8 @@ def make_excel(data):
     export = export_dataframe(data)
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        export.to_excel(writer, index=False, sheet_name="รายงานการเบิก")
-        sheet = writer.sheets["รายงานการเบิก"]
+        export.to_excel(writer, index=False, sheet_name="รายงานฝั่งคลัง")
+        sheet = writer.sheets["รายงานฝั่งคลัง"]
         sheet.freeze_panes = "A2"
         sheet.auto_filter.ref = sheet.dimensions
         sheet.row_dimensions[1].height = 30
@@ -691,7 +732,7 @@ def render_plotly_or_info(frame, required_columns, builder, key):
         st.info("ℹ️ ยังไม่มีข้อมูลสำหรับแสดงกราฟ")
 
 
-# ── Callbacks, Live Clock, Sound และ Timeline dialog ──────────────────────────
+# ── Callback, Live Clock, Sound, Timeline ────────────────────────────────────
 def set_timestamp(date_key, time_key, enabled_key):
     current = now_bangkok()
     st.session_state[date_key] = current.date()
@@ -753,17 +794,17 @@ def play_success_sound():
     )
 
 
-@st.dialog("📄 หลักฐานและ Timeline ใบเบิก")
+@st.dialog("📄 หลักฐาน Timeline · งานคลังสินค้า")
 def show_timeline_dialog(record):
     job = html.escape(str(record.get("job_number") or ""))
     department = html.escape(str(record.get("department") or "ไม่ระบุ"))
     line = html.escape(str(record.get("line") or "—"))
     item = html.escape(str(record.get("item_name") or "—"))
     status = html.escape(job_status(record))
-    is_cancelled = str(record.get("status", "")) == "ยกเลิก"
+    cancelled = str(record.get("status", "")) == "ยกเลิก"
 
     cancel_block = ""
-    if is_cancelled:
+    if cancelled:
         cancel_block = f"""
         <div class="timeline-step danger">
           🔴 ยกเลิก<br>
@@ -773,32 +814,35 @@ def show_timeline_dialog(record):
         </div>
         """
 
+    finished = pd.notna(record.get("finish_pick_time"))
+    completion_message = (
+        "สินค้าจัดเสร็จวาง ณ จุด Staging เรียบร้อยแล้ว สิ้นสุดหน้าที่คลังสินค้า"
+        if finished else "งานยังไม่ถึงขั้นจัดเสร็จ"
+    )
+
     st.markdown(
         f"""
         <div class="timeline-card">
-          <div class="eyebrow">SMART WAREHOUSE · EVIDENCE SLIP</div>
+          <div class="eyebrow">SMART WAREHOUSE · STAGING EVIDENCE</div>
           <h2>JOB {job}</h2>
           <div>แผนก: <b>{department}</b>　ไลน์: <b>{line}</b></div>
           <div>รายการ: {item}</div>
           <div>สถานะ: <b>{status}</b></div>
           <hr>
           <div class="timeline-step">
-            📥 รับเอกสาร<br>
+            📥 รับเรื่อง<br>
             <span class="timeline-time">{html.escape(display_datetime(record.get("received_at")))}</span>
           </div>
           <div class="timeline-step start">
             🟡 เริ่มจัดสินค้า<br>
             <span class="timeline-time">{html.escape(display_datetime(record.get("start_pick_time")))}</span>
+            <div>เวลารอเริ่มจัด: {html.escape(format_duration(record.get("waiting_start_minutes")))}</div>
           </div>
-          <div class="timeline-step done">
-            🔵 จัดเสร็จรอ PD<br>
-            <span class="timeline-time">{html.escape(display_datetime(record.get("picked_at")))}</span>
-            <div>ระยะเวลาจัด: {html.escape(format_duration(record.get("processing_minutes")))}</div>
-          </div>
-          <div class="timeline-step">
-            🟢 PD มารับสินค้า<br>
-            <span class="timeline-time">{html.escape(display_datetime(record.get("handover_at")))}</span>
-            <div>ระยะเวลารอรับ: {html.escape(format_duration(record.get("waiting_minutes")))}</div>
+          <div class="timeline-step finish">
+            🟢 จัดเสร็จ / วาง Staging<br>
+            <span class="timeline-time">{html.escape(display_datetime(record.get("finish_pick_time")))}</span>
+            <div>ระยะเวลาจัดสินค้า: {html.escape(format_duration(record.get("picking_minutes")))}</div>
+            <div><b>{html.escape(completion_message)}</b></div>
           </div>
           {cancel_block}
           <div class="subtle">เวลาอ้างอิง Asia/Bangkok · ผู้บันทึก: Admin</div>
@@ -809,7 +853,7 @@ def show_timeline_dialog(record):
     st.caption("จับภาพหน้าจอหรือใช้คำสั่งพิมพ์ของเบราว์เซอร์เพื่อส่งเป็นหลักฐาน")
 
 
-# ── Login ─────────────────────────────────────────────────────────────────────
+# ── Login และ Sidebar ─────────────────────────────────────────────────────────
 try:
     init_db()
 except sqlite3.OperationalError as error:
@@ -825,7 +869,7 @@ if not st.session_state["authenticated"]:
         <div class="login-card">
           <div class="eyebrow">SMART WAREHOUSE</div>
           <h1>📦 เข้าสู่ระบบ</h1>
-          <div class="subtle">ระบบติดตามใบเบิกและวิเคราะห์งานคลังสินค้า</div>
+          <div class="subtle">ระบบติดตามงานฝั่งคลังสินค้า</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -846,8 +890,6 @@ if not st.session_state["authenticated"]:
             st.error("Username หรือ Password ไม่ถูกต้อง")
     st.stop()
 
-
-# ── Sidebar และ Topbar ────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 📦 SMART WAREHOUSE")
     st.caption("BUSINESS MANAGEMENT SYSTEM")
@@ -895,7 +937,7 @@ except (sqlite3.OperationalError, pd.errors.DatabaseError) as error:
 
 # ── หน้า 1: Dashboard ─────────────────────────────────────────────────────────
 if page == "📊 Dashboard":
-    heading("ภาพรวมคลังสินค้า", "ติดตามปริมาณงาน ระยะเวลาจัด และใบเบิกเย็น")
+    heading("ภาพรวมงานคลัง", "ติดตามงานตั้งแต่รับเรื่องจนจัดเสร็จวาง Staging")
     filtered = filter_data(data, "dashboard")
 
     if filtered.empty:
@@ -905,24 +947,23 @@ if page == "📊 Dashboard":
         today = now_bangkok().date()
         today_count = int((filtered["received_at"].dt.date == today).sum())
         late_count = int(filtered["late"].sum())
-        waiting_to_start = int(filtered["status"].eq("รอจัด").sum())
+        waiting_count = int(filtered["status"].eq("รอจัด").sum())
 
-        processing_values = filtered["processing_minutes"].dropna().tolist()
-        average_processing = (
-            sum(processing_values) / len(processing_values)
-            if processing_values else 0
+        total_values = filtered["warehouse_total_minutes"].dropna().tolist()
+        average_total = sum(total_values) / len(total_values) if total_values else 0
+
+        cards = st.columns(4)
+        cards[0].metric("รวมใบเบิก", f"{total:,}", f"วันนี้ {today_count:,} JOB")
+        cards[1].metric("จุดคอขวด · รอเริ่มจัด", f"{waiting_count:,}", "JOB")
+        cards[2].metric("เวลารวมฝั่งคลังเฉลี่ย", format_duration(average_total))
+        cards[3].metric(
+            "ใบเบิกเย็น",
+            f"{late_count / total * 100:.1f}%",
+            f"{late_count:,} JOB",
         )
 
-        kpis = st.columns(4)
-        kpis[0].metric("รวมใบเบิก", f"{total:,}", f"วันนี้ {today_count:,} JOB")
-        kpis[1].metric("จุดคอขวด · รอจัด", f"{waiting_to_start:,}", "JOB")
-        kpis[2].metric("เวลาจัดเฉลี่ย", format_duration(average_processing))
-        kpis[3].metric(
-            "ใบเบิกเย็น", f"{late_count / total * 100:.1f}%", f"{late_count:,} JOB"
-        )
-
-        chart_left, chart_right = st.columns(2)
-        with chart_left:
+        left, right = st.columns(2)
+        with left:
             st.markdown("#### 🍩 ใบเบิกปกติ เทียบกับใบเบิกเย็น")
             mix = pd.DataFrame(
                 {
@@ -933,10 +974,7 @@ if page == "📊 Dashboard":
 
             def donut_chart(frame):
                 fig = px.pie(
-                    frame,
-                    names="ประเภทใบเบิก",
-                    values="จำนวน",
-                    hole=.62,
+                    frame, names="ประเภทใบเบิก", values="จำนวน", hole=.62,
                     color="ประเภทใบเบิก",
                     color_discrete_map={
                         "ใบเบิกปกติ": "#16a34a",
@@ -959,10 +997,10 @@ if page == "📊 Dashboard":
                 mix, ["ประเภทใบเบิก", "จำนวน"], donut_chart, "dashboard_donut"
             )
 
-        with chart_right:
+        with right:
             st.markdown("#### 🕒 จำนวนใบเบิกตามชั่วโมง")
-            hourly = pd.DataFrame()
             source = filtered.dropna(subset=["received_at"])
+            hourly = pd.DataFrame()
             if not source.empty:
                 hourly = (
                     source.assign(ชั่วโมง=source["received_at"].dt.hour)
@@ -1002,19 +1040,20 @@ if page == "📊 Dashboard":
 
 # ── หน้า 2: บันทึกใบเบิก ─────────────────────────────────────────────────────
 elif page == "📝 บันทึกใบเบิก":
-    heading("บันทึกใบเบิก", "วางหรือกรอกเลข JOB พร้อมบันทึกเวลารับเอกสาร")
+    heading("บันทึกใบเบิก", "วางหรือกรอกเลข JOB พร้อมบันทึกเวลารับเรื่อง")
     st.caption(
         f"Cut-off {CUTOFF_TIME.strftime('%H:%M')} น. · "
-        "ใบเบิกหลังเวลานี้จะติดแท็กใบเบิกเย็น"
+        "ระบบติดแท็กใบเบิกเย็นเมื่อรับเอกสารหลังเวลานี้"
     )
 
-    now = now_bangkok()
+    current = now_bangkok()
     date_col, time_col = st.columns(2)
     received_date = date_col.date_input(
-        "วันที่รับใบเบิก", value=now.date(), key="new_received_date"
+        "วันที่รับใบเบิก", value=current.date(), key="new_received_date"
     )
     received_time = time_col.time_input(
-        "เวลารับใบเบิก", value=now.time().replace(microsecond=0),
+        "เวลารับใบเบิก",
+        value=current.time().replace(microsecond=0),
         key="new_received_time",
     )
     received_at = parse_local_datetime(received_date, received_time)
@@ -1092,9 +1131,7 @@ elif page == "📝 บันทึกใบเบิก":
                 if previous_line in PRODUCTION_LINES else 0
             )
             line = cols[2].selectbox(
-                "ไลน์ผลิต",
-                PRODUCTION_LINES,
-                index=line_index,
+                "ไลน์ผลิต", PRODUCTION_LINES, index=line_index,
                 key=f"manual_line_{index}",
             )
         else:
@@ -1118,11 +1155,11 @@ elif page == "📝 บันทึกใบเบิก":
             st.error("กรุณาระบุวันที่และเวลารับใบเบิกให้ถูกต้อง")
         else:
             entries = []
+
             for raw_line in bulk_text.splitlines():
                 raw_line = raw_line.strip()
                 if not raw_line:
                     continue
-
                 if "\t" in raw_line:
                     parts = [part.strip() for part in raw_line.split("\t")]
                 elif "|" in raw_line:
@@ -1197,7 +1234,7 @@ elif page == "📝 บันทึกใบเบิก":
 
 # ── หน้า 3: จัดการสถานะ ──────────────────────────────────────────────────────
 elif page == "⚙️ จัดการสถานะ":
-    heading("จัดการสถานะ", "ลงเวลาเริ่มจัด จัดเสร็จ PD รับสินค้า หรือยกเลิก JOB")
+    heading("จัดการสถานะ", "ลงเวลาเริ่มจัดและจัดเสร็จวาง Staging")
     active = data[data["status"] != "ยกเลิก"] if not data.empty else data
 
     if active.empty:
@@ -1235,12 +1272,10 @@ elif page == "⚙️ จัดการสถานะ":
             parsed = as_bangkok(value)
             return parsed.time().replace(microsecond=0) if parsed else time(0, 0)
 
-        timestamp_fields = {
-            "start": record["start_pick_time"],
-            "picked": record["picked_at"],
-            "handover": record["handover_at"],
-        }
-        for field, saved_value in timestamp_fields.items():
+        for field, saved_value in (
+            ("start", record["start_pick_time"]),
+            ("finish", record["finish_pick_time"]),
+        ):
             enabled_key = f"{field}_enabled_{job_key}"
             date_key = f"{field}_date_{job_key}"
             time_key = f"{field}_time_{job_key}"
@@ -1254,95 +1289,58 @@ elif page == "⚙️ จัดการสถานะ":
         start_enabled_key = f"start_enabled_{job_key}"
         start_date_key = f"start_date_{job_key}"
         start_time_key = f"start_time_{job_key}"
-        picked_enabled_key = f"picked_enabled_{job_key}"
-        picked_date_key = f"picked_date_{job_key}"
-        picked_time_key = f"picked_time_{job_key}"
-        handover_enabled_key = f"handover_enabled_{job_key}"
-        handover_date_key = f"handover_date_{job_key}"
-        handover_time_key = f"handover_time_{job_key}"
+        finish_enabled_key = f"finish_enabled_{job_key}"
+        finish_date_key = f"finish_date_{job_key}"
+        finish_time_key = f"finish_time_{job_key}"
 
-        start_col, picked_col, handover_col = st.columns(3)
-
+        start_col, finish_col = st.columns(2)
         with start_col:
             st.markdown("#### 🟡 เริ่มจัดสินค้า")
-            st.checkbox(
-                "บันทึกเวลาเริ่มจัด",
-                key=start_enabled_key,
-            )
+            st.checkbox("บันทึกเวลาเริ่มจัดแล้ว", key=start_enabled_key)
             st.button(
-                "⏱️ เริ่มจัดสินค้า · เวลาปัจจุบัน",
+                "⏱️ เริ่มจัดสินค้า · ลงเวลาปัจจุบัน",
                 key=f"auto_start_{job_key}",
                 on_click=set_timestamp,
                 args=(start_date_key, start_time_key, start_enabled_key),
             )
-            start_date = st.date_input(
-                "วันที่เริ่มจัด", key=start_date_key
-            )
-            start_time = st.time_input(
-                "เวลาเริ่มจัด", key=start_time_key
-            )
+            start_date = st.date_input("วันที่เริ่มจัด", key=start_date_key)
+            start_time = st.time_input("เวลาเริ่มจัด", key=start_time_key)
 
-        with picked_col:
-            st.markdown("#### 🔵 จัดเสร็จรอ PD")
-            st.checkbox(
-                "บันทึกเวลาจัดเสร็จ",
-                key=picked_enabled_key,
-            )
+        with finish_col:
+            st.markdown("#### 🟢 จัดเสร็จ / วาง Staging")
+            st.checkbox("บันทึกเวลาจัดเสร็จแล้ว", key=finish_enabled_key)
             st.button(
-                "⏱️ จัดเสร็จ · เวลาปัจจุบัน",
-                key=f"auto_picked_{job_key}",
+                "📦 จัดเสร็จ/วาง Staging · ลงเวลาปัจจุบัน",
+                key=f"auto_finish_{job_key}",
                 on_click=set_timestamp,
-                args=(picked_date_key, picked_time_key, picked_enabled_key),
+                args=(finish_date_key, finish_time_key, finish_enabled_key),
             )
-            picked_date = st.date_input(
-                "วันที่จัดเสร็จ", key=picked_date_key
-            )
-            picked_time = st.time_input(
-                "เวลาจัดเสร็จ", key=picked_time_key
-            )
-
-        with handover_col:
-            st.markdown("#### 🟢 PD รับสินค้า")
-            st.checkbox(
-                "บันทึกเวลาที่ PD รับ",
-                key=handover_enabled_key,
-            )
-            st.button(
-                "⏱️ PD รับ · เวลาปัจจุบัน",
-                key=f"auto_handover_{job_key}",
-                on_click=set_timestamp,
-                args=(handover_date_key, handover_time_key, handover_enabled_key),
-            )
-            handover_date = st.date_input(
-                "วันที่ PD รับ", key=handover_date_key
-            )
-            handover_time = st.time_input(
-                "เวลา PD รับ", key=handover_time_key
-            )
+            finish_date = st.date_input("วันที่จัดเสร็จ", key=finish_date_key)
+            finish_time = st.time_input("เวลาจัดเสร็จ", key=finish_time_key)
 
         received_at = as_bangkok(record["received_at"])
         start_pick_time = (
             parse_local_datetime(start_date, start_time)
             if st.session_state[start_enabled_key] else None
         )
-        picked_at = (
-            parse_local_datetime(picked_date, picked_time)
-            if st.session_state[picked_enabled_key] else None
-        )
-        handover_at = (
-            parse_local_datetime(handover_date, handover_time)
-            if st.session_state[handover_enabled_key] else None
+        finish_pick_time = (
+            parse_local_datetime(finish_date, finish_time)
+            if st.session_state[finish_enabled_key] else None
         )
 
-        if start_pick_time and picked_at:
+        if start_pick_time:
             st.caption(
-                "เวลาจัดตั้งแต่เริ่มหยิบ: "
-                + format_duration(duration_minutes(start_pick_time, picked_at))
+                "เวลารอเริ่มจัด: "
+                + format_duration(duration_minutes(received_at, start_pick_time))
             )
-        if picked_at and handover_at:
+        if start_pick_time and finish_pick_time:
             st.caption(
-                "เวลารอ PD: "
-                + format_duration(duration_minutes(picked_at, handover_at))
+                "ระยะเวลาจัดสินค้า: "
+                + format_duration(duration_minutes(start_pick_time, finish_pick_time))
+            )
+            st.caption(
+                "เวลารวมฝั่งคลัง: "
+                + format_duration(duration_minutes(received_at, finish_pick_time))
             )
 
         if st.button(
@@ -1354,14 +1352,10 @@ elif page == "⚙️ จัดการสถานะ":
             error_message = None
             if start_pick_time and duration_minutes(received_at, start_pick_time) is None:
                 error_message = "เวลาเริ่มจัดต้องไม่อยู่ก่อนเวลารับใบเบิก"
-            elif picked_at and not start_pick_time:
+            elif finish_pick_time and not start_pick_time:
                 error_message = "กรุณาบันทึกเวลาเริ่มจัดก่อนเวลาจัดเสร็จ"
-            elif picked_at and duration_minutes(start_pick_time, picked_at) is None:
+            elif finish_pick_time and duration_minutes(start_pick_time, finish_pick_time) is None:
                 error_message = "เวลาจัดเสร็จต้องไม่อยู่ก่อนเวลาเริ่มจัด"
-            elif handover_at and not picked_at:
-                error_message = "กรุณาบันทึกเวลาจัดเสร็จก่อนเวลาที่ PD มารับ"
-            elif handover_at and duration_minutes(picked_at, handover_at) is None:
-                error_message = "เวลา PD รับสินค้าต้องไม่อยู่ก่อนเวลาจัดเสร็จ"
 
             if error_message:
                 st.error(error_message)
@@ -1375,8 +1369,7 @@ elif page == "⚙️ จัดการสถานะ":
                         record["quantity"],
                         received_at,
                         start_pick_time,
-                        picked_at,
-                        handover_at,
+                        finish_pick_time,
                     )
                     st.session_state["play_success_tick"] = True
                     st.success("บันทึกเวลาเรียบร้อย")
@@ -1397,7 +1390,6 @@ elif page == "⚙️ จัดการสถานะ":
                 key=f"edit_department_{job_key}",
                 accept_new_options=True,
             )
-
             edit_line = ""
             if edit_department == "PD":
                 old_line = str(record["line"] or "L1")
@@ -1413,8 +1405,7 @@ elif page == "⚙️ จัดการสถานะ":
                 )
 
             edit_item = st.text_input(
-                "รายการสินค้า",
-                value=str(record["item_name"] or ""),
+                "รายการสินค้า", value=str(record["item_name"] or ""),
                 key=f"edit_item_{job_key}",
             )
             edit_quantity = st.number_input(
@@ -1435,8 +1426,7 @@ elif page == "⚙️ จัดการสถานะ":
                         edit_quantity if edit_quantity > 0 else None,
                         received_at,
                         start_pick_time,
-                        picked_at,
-                        handover_at,
+                        finish_pick_time,
                     )
                     st.success("อัปเดตรายละเอียดแล้ว")
                     st.rerun()
@@ -1459,7 +1449,6 @@ elif page == "⚙️ จัดการสถานะ":
             can_cancel = bool(
                 cancel_by.strip() and cancel_reason.strip() and confirm_cancel
             )
-
             if st.button(
                 "🔴 บันทึกยกเลิก JOB",
                 disabled=not can_cancel,
@@ -1482,8 +1471,8 @@ elif page == "📄 ประวัติ / Reports":
         st.info("ยังไม่มีข้อมูลใบเบิก")
     else:
         display_table(history, "history_table")
-
         excel_col, csv_col = st.columns(2)
+
         with excel_col:
             st.download_button(
                 "📥 ดาวน์โหลด Excel (.xlsx)",
@@ -1503,23 +1492,23 @@ elif page == "📄 ประวัติ / Reports":
                 key="download_csv",
             )
 
-        eligible = history[
+        timeline_jobs = history[
             history["late"].fillna(False) | history["status"].eq("ยกเลิก")
         ]
-        if not eligible.empty:
+        if not timeline_jobs.empty:
             st.markdown("#### 📄 พิมพ์หลักฐาน / สรุป Timeline")
-            for _, row in eligible.iterrows():
-                record_id = int(row["id"])
-                label = (
+            for _, row in timeline_jobs.iterrows():
+                row_id = int(row["id"])
+                button_label = (
                     f'📄 เปิด Timeline · {row["job_number"]} · '
                     f'{row["department"] or "ไม่ระบุ"}'
                 )
                 if st.button(
-                    label,
-                    key=f"timeline_button_{record_id}",
+                    button_label,
+                    key=f"timeline_button_{row_id}",
                     use_container_width=True,
                 ):
-                    st.session_state["timeline_record_id"] = record_id
+                    st.session_state["timeline_record_id"] = row_id
 
         timeline_id = st.session_state.get("timeline_record_id")
         if timeline_id is not None:
@@ -1534,6 +1523,7 @@ elif page == "📄 ประวัติ / Reports":
         st.write("เวอร์ชันระบบ: **1.0**")
         st.write(f"Cut-off ใบเบิก: **{CUTOFF_TIME.strftime('%H:%M')} น.**")
         st.write("เขตเวลา: **Asia/Bangkok (UTC+7)**")
+        st.write("ขั้นตอนสิ้นสุดฝั่งคลัง: **จัดเสร็จและวาง Staging**")
         st.write(f"ผู้ใช้งานปัจจุบัน: **{DISPLAY_NAME}**")
         st.write("ฐานข้อมูล: **SQLite**")
 
