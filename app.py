@@ -27,27 +27,15 @@ st.set_page_config(
 DB_PATH = "warehouse.db"
 BANGKOK = pytz.timezone("Asia/Bangkok")
 CUTOFF_TIME = time(16, 0)
-
 USERNAME = "lNWBOOM"
 PASSWORD = "Boomkub555"
 DISPLAY_NAME = "Admin"
 
 DEPARTMENTS = [
-    "PD",
-    "ธุรการPD",
-    "จัดซื้อ",
-    "วางแผน",
-    "RD",
-    "บัญชี",
-    "ขนส่ง",
-    "คลังสินค้าสำเร็จรูป",
-    "CS",
-    "คลังวัตถุดิบ&แพคเกจจิ้ง",
-    "อื่นๆ",
+    "PD", "ธุรการPD", "จัดซื้อ", "วางแผน", "RD", "บัญชี", "ขนส่ง",
+    "คลังสินค้าสำเร็จรูป", "CS", "คลังวัตถุดิบ&แพคเกจจิ้ง", "อื่นๆ",
 ]
 PRODUCTION_LINES = [f"L{i}" for i in range(1, 11)]
-
-# ไม่มีข้อมูลเวลา PD มารับหรือเวลารอรับ PD
 CANONICAL_COLUMNS = [
     "id", "job_number", "department", "line", "item_name", "quantity",
     "created_at", "start_pick_time", "finish_pick_time", "cancelled_at",
@@ -56,7 +44,7 @@ CANONICAL_COLUMNS = [
 
 
 # ============================================================
-# UI theme
+# Theme
 # ============================================================
 
 st.markdown(
@@ -64,61 +52,60 @@ st.markdown(
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
     html, body, [class*="css"], button, input, textarea, select {
-        font-family: 'Prompt', sans-serif !important;
+        font-family:'Prompt',sans-serif !important;
     }
     .stApp {
         color:#1e293b;
         background:linear-gradient(180deg,#f8fafc 0%,#f1f5f9 100%);
     }
-    [data-testid="stSidebar"] { background:#fff; border-right:1px solid #e2e8f0; }
-    .topbar,.panel,.kpi-card,.timeline-card {
-        border:1px solid #e2e8f0; border-radius:12px; background:#fff;
+    [data-testid="stSidebar"] {background:#fff;border-right:1px solid #e2e8f0;}
+    .topbar,.panel,.kpi-card,.entry-card,.timeline-card {
+        border:1px solid #e2e8f0;border-radius:12px;background:#fff;
         box-shadow:0 10px 30px rgba(15,23,42,.05);
     }
     .topbar {
-        display:flex; align-items:center; justify-content:space-between; gap:16px;
-        padding:16px 20px; margin:2px 0 20px;
+        display:flex;align-items:center;justify-content:space-between;gap:16px;
+        padding:16px 20px;margin:2px 0 20px;
     }
-    .brand { color:#0f172a; font-size:20px; font-weight:700; letter-spacing:.035em; }
-    .brand-subtitle,.page-heading p { color:#64748b; font-size:13px; margin:3px 0 0; }
+    .brand {color:#0f172a;font-size:20px;font-weight:700;letter-spacing:.035em;}
+    .brand-subtitle,.page-heading p {color:#64748b;font-size:13px;margin:3px 0 0;}
     .profile-pill,.clock-pill {
-        white-space:nowrap; border-radius:999px; padding:7px 12px;
-        font-size:13px; font-weight:600;
+        white-space:nowrap;border-radius:999px;padding:7px 12px;
+        font-size:13px;font-weight:600;
     }
-    .profile-pill { border:1px solid #bbf7d0; background:#f0fdf4; color:#15803d; }
-    .clock-pill { border:1px solid #dbeafe; background:#eff6ff; color:#1d4ed8; }
-    .page-heading { margin:4px 0 18px; }
-    .page-heading h1 { color:#0f172a; font-size:27px; font-weight:700; margin:0; }
-    .panel,.timeline-card { padding:16px; margin:8px 0 16px; }
-    .kpi-card { height:100%; min-height:110px; padding:16px 18px; }
-    .kpi-label { color:#64748b; font-size:13px; }
-    .kpi-value { color:#0f172a; font-size:25px; font-weight:700; margin-top:6px; }
-    .kpi-hint,.small-muted { color:#94a3b8; font-size:12px; }
-    .timeline-card { padding:14px; margin:8px 0; }
-    .timeline-time { color:#0f172a; font-size:15px; font-weight:600; }
-    .timeline-label { color:#64748b; font-size:12px; }
-    .tag-badge { display:inline-block; border-radius:999px; padding:4px 10px; font-size:12px; font-weight:600; }
-    .tag-late { color:#b91c1c; background:#fee2e2; }
-    .tag-normal { color:#166534; background:#dcfce7; }
-    .footer { color:#94a3b8; font-size:11px; text-align:center; padding:22px 0 10px; }
-    div.stButton > button, div.stDownloadButton > button {
-        border-radius:10px !important; transition:transform .16s ease,box-shadow .16s ease;
+    .profile-pill {border:1px solid #bbf7d0;background:#f0fdf4;color:#15803d;}
+    .clock-pill {border:1px solid #dbeafe;background:#eff6ff;color:#1d4ed8;}
+    .page-heading {margin:4px 0 18px;}
+    .page-heading h1 {color:#0f172a;font-size:27px;font-weight:700;margin:0;}
+    .panel {padding:18px;margin:8px 0 16px;}
+    .entry-card {padding:14px 16px;margin:10px 0;}
+    .kpi-card {height:100%;min-height:110px;padding:16px 18px;}
+    .kpi-label {color:#64748b;font-size:13px;}
+    .kpi-value {color:#0f172a;font-size:25px;font-weight:700;margin-top:6px;}
+    .kpi-hint,.small-muted {color:#94a3b8;font-size:12px;}
+    .timeline-card {padding:14px;margin:8px 0;}
+    .timeline-time {color:#0f172a;font-size:15px;font-weight:600;}
+    .timeline-label {color:#64748b;font-size:12px;}
+    .tag-badge {display:inline-block;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:600;}
+    .tag-late {color:#b91c1c;background:#fee2e2;}
+    .tag-normal {color:#166534;background:#dcfce7;}
+    .footer {color:#94a3b8;font-size:11px;text-align:center;padding:22px 0 10px;}
+    div.stButton > button,div.stDownloadButton > button {
+        border-radius:10px !important;transition:transform .16s ease,box-shadow .16s ease;
     }
-    div.stButton > button:hover, div.stDownloadButton > button:hover {
-        transform:translateY(-1px); box-shadow:0 7px 16px rgba(15,23,42,.1);
+    div.stButton > button:hover,div.stDownloadButton > button:hover {
+        transform:translateY(-1px);box-shadow:0 7px 16px rgba(15,23,42,.1);
     }
     button[kind="primary"] {
-        color:white !important; border:0 !important;
+        color:white !important;border:0 !important;
         background:linear-gradient(110deg,#16a34a,#2563eb) !important;
     }
-    div[data-testid="stTextInput"] input, div[data-testid="stNumberInput"] input,
-    div[data-testid="stDateInput"] input, div[data-testid="stTimeInput"] input,
+    div[data-testid="stTextInput"] input,div[data-testid="stNumberInput"] input,
+    div[data-testid="stDateInput"] input,div[data-testid="stTimeInput"] input,
     div[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
         border-radius:10px !important;
     }
-    div[data-testid="stDataFrame"] {
-        border:1px solid #e2e8f0; border-radius:12px; overflow:hidden;
-    }
+    div[data-testid="stDataFrame"] {border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -126,7 +113,7 @@ st.markdown(
 
 
 # ============================================================
-# Helpers
+# Shared helpers
 # ============================================================
 
 def heading(title, subtitle=""):
@@ -177,9 +164,11 @@ def format_duration(minutes):
     except (TypeError, ValueError, OverflowError):
         return "—"
     hours, mins = divmod(total, 60)
-    return f"{hours} ชม. {mins} นาที" if hours and mins else (
-        f"{hours} ชม." if hours else f"{mins} นาที"
-    )
+    if hours and mins:
+        return f"{hours} ชม. {mins} นาที"
+    if hours:
+        return f"{hours} ชม."
+    return f"{mins} นาที"
 
 
 def is_late(value):
@@ -212,7 +201,7 @@ def render_topbar():
             hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false}).format(new Date());
           el.textContent="🇹🇭 "+d+" · "+t;
         }
-        tick(); setInterval(tick,1000);
+        tick();setInterval(tick,1000);
         </script>
         """,
         height=35,
@@ -236,16 +225,16 @@ def play_tick():
     components.html(
         """
         <script>
-        try {
-          const c=new (window.AudioContext||window.webkitAudioContext)();
+        try{
+          const c=new(window.AudioContext||window.webkitAudioContext)();
           const o=c.createOscillator(),g=c.createGain();
-          o.type="sine"; o.frequency.setValueAtTime(800,c.currentTime);
+          o.type="sine";o.frequency.setValueAtTime(800,c.currentTime);
           o.frequency.exponentialRampToValueAtTime(400,c.currentTime+.04);
           g.gain.setValueAtTime(.12,c.currentTime);
           g.gain.exponentialRampToValueAtTime(.01,c.currentTime+.04);
           o.connect(g);g.connect(c.destination);o.start();o.stop(c.currentTime+.04);
           o.onended=()=>c.close();
-        } catch(e) {}
+        }catch(e){}
         </script>
         """,
         height=0,
@@ -253,13 +242,13 @@ def play_tick():
 
 
 # ============================================================
-# SQLite / schema migration
+# SQLite and schema migration
 # ============================================================
 
 def db_connect():
-    connection = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
-    connection.row_factory = sqlite3.Row
-    return connection
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def table_columns(conn, table):
@@ -348,7 +337,7 @@ def init_db():
         )
         conn.commit()
 
-        # Rebuild table if legacy columns exist, keeping only app fields.
+        # หากเป็นฐานข้อมูลรุ่นเก่า ให้ rebuild เป็น schema ปัจจุบัน
         existing = table_columns(conn, "requisitions")
         if existing != CANONICAL_COLUMNS:
             conn.execute("DROP TABLE IF EXISTS requisitions_new")
@@ -374,8 +363,9 @@ def init_db():
                 """
             )
             selects = [
-                col if col in existing else ("rowid AS id" if col == "id" else
-                "'รอจัด' AS status" if col == "status" else f"'' AS {col}")
+                col if col in existing else
+                ("rowid AS id" if col == "id" else
+                 "'รอจัด' AS status" if col == "status" else f"'' AS {col}")
                 for col in CANONICAL_COLUMNS
             ]
             conn.execute(
@@ -427,7 +417,6 @@ def insert_requisition(job_number, department, line, item_name, quantity, create
     job_number = str(job_number or "").strip()
     department = str(department or "").strip()
     line = str(line or "").strip() if department == "PD" else ""
-
     if not job_number:
         return False, "กรุณาระบุรหัส JOB"
 
@@ -474,9 +463,12 @@ def update_requisition_times(job_id, start_pick_time, finish_pick_time):
             WHERE id=?
             """,
             (
-                start_pick_time or "", finish_pick_time or "",
-                finish_pick_time or "", start_pick_time or "",
-                now_bangkok().isoformat(sep=" ", timespec="seconds"), int(job_id),
+                start_pick_time or "",
+                finish_pick_time or "",
+                finish_pick_time or "",
+                start_pick_time or "",
+                now_bangkok().isoformat(sep=" ", timespec="seconds"),
+                int(job_id),
             ),
         )
         conn.commit()
@@ -501,7 +493,7 @@ def cancel_requisition(job_id, cancelled_by, cancel_reason):
 
 
 # ============================================================
-# Filtering, table and export helpers
+# Filters and table/export helpers
 # ============================================================
 
 def filter_data(df, page_type="all", search_text="", start_date=None, end_date=None):
@@ -525,9 +517,9 @@ def filter_data(df, page_type="all", search_text="", start_date=None, end_date=N
 
     query = str(search_text or "").strip().casefold()
     if query:
-        columns = [c for c in ["job_number", "department", "line", "item_name", "status"] if c in result]
-        if columns:
-            mask = result[columns].fillna("").astype(str).apply(
+        cols = [c for c in ["job_number", "department", "line", "item_name", "status"] if c in result]
+        if cols:
+            mask = result[cols].fillna("").astype(str).apply(
                 lambda col: col.str.casefold().str.contains(re.escape(query), regex=True)
             ).any(axis=1)
             result = result.loc[mask]
@@ -545,6 +537,7 @@ def render_filters(df, prefix):
             "ช่วงวันที่", ["ทั้งหมด", "วันนี้", "7 วันล่าสุด", "เลือกช่วงวันที่"],
             key=f"{prefix}_period",
         )
+
     start_date = end_date = None
     if period == "วันนี้":
         start_date = end_date = today
@@ -594,7 +587,7 @@ def render_table(df, key):
         st.info("ยังไม่มีข้อมูลใบเบิกในเงื่อนไขที่เลือก")
         return
     view = prepare_display_data(df)
-    display = pd.DataFrame({
+    table = pd.DataFrame({
         "เลขที่ Job": view["job_number"],
         "วันเวลาที่รับใบเบิก": view["created_display"],
         "แผนก": view["department"],
@@ -609,7 +602,7 @@ def render_table(df, key):
         "ระยะเวลาจัดสินค้า": view["picking_display"],
         "เวลารวมฝั่งคลัง": view["total_display"],
     })
-    st.dataframe(display, use_container_width=True, hide_index=True, key=key)
+    st.dataframe(table, use_container_width=True, hide_index=True, key=key)
 
 
 def make_export_frame(df):
@@ -676,12 +669,10 @@ def show_timeline_dialog(record):
             จำนวน: {html.escape(str(row['quantity']))}</div>""",
             unsafe_allow_html=True,
         )
-        badge_class = "tag-late" if row["late"] else "tag-normal"
-        badge_text = "🔴 ใบเบิกเย็น/ส่งช้า" if row["late"] else "🟢 ใบเบิกปกติ"
-        st.markdown(
-            f'<span class="tag-badge {badge_class}">{badge_text}</span>',
-            unsafe_allow_html=True,
-        )
+        badge = "tag-late" if row["late"] else "tag-normal"
+        text = "🔴 ใบเบิกเย็น/ส่งช้า" if row["late"] else "🟢 ใบเบิกปกติ"
+        st.markdown(f'<span class="tag-badge {badge}">{text}</span>', unsafe_allow_html=True)
+
         for icon, label, value in [
             ("📥", "รับเรื่อง", row.get("created_at")),
             ("⏱️", "เริ่มจัดสินค้า", row.get("start_pick_time")),
@@ -693,6 +684,7 @@ def show_timeline_dialog(record):
                 {html.escape(format_timestamp(value))}</div></div>""",
                 unsafe_allow_html=True,
             )
+
         st.markdown(
             f"""<div class="panel"><b>เวลารอเริ่มจัด:</b> {row['wait_display']}<br>
             <b>ระยะเวลาจัดสินค้า:</b> {row['picking_display']}<br>
@@ -741,7 +733,7 @@ def login_screen():
 
 
 # ============================================================
-# Page 1: Multi-row requisition form
+# Page 1: Multi-item input
 # ============================================================
 
 def initialize_entry_rows():
@@ -751,9 +743,9 @@ def initialize_entry_rows():
 
 
 def add_entry_row():
-    new_id = st.session_state.get("entry_next_id", 1)
-    st.session_state["entry_rows"].append(f"row_{new_id}")
-    st.session_state["entry_next_id"] = new_id + 1
+    next_id = st.session_state.get("entry_next_id", 1)
+    st.session_state["entry_rows"].append(f"row_{next_id}")
+    st.session_state["entry_next_id"] = next_id + 1
 
 
 def remove_entry_row(row_id):
@@ -762,67 +754,101 @@ def remove_entry_row(row_id):
         rows.remove(row_id)
 
 
-def render_entry_department(row_id):
-    dept_key = f"entry_department_{row_id}"
-    custom_key = f"entry_custom_department_{row_id}"
-    line_key = f"entry_line_{row_id}"
-
-    if dept_key not in st.session_state:
-        last = st.session_state.get("last_department", "PD")
-        st.session_state[dept_key] = last if last in DEPARTMENTS else "PD"
-
-    choice = st.selectbox("แผนก", DEPARTMENTS, key=dept_key)
-
-    if choice == "อื่นๆ":
-        department = st.text_input(
-            "ระบุชื่อแผนก",
-            key=custom_key,
-            placeholder="ชื่อแผนก",
-        ).strip() or "อื่นๆ"
-    else:
-        department = choice
-
-    line = ""
-    if department == "PD":
-        if line_key not in st.session_state:
-            last_line = st.session_state.get("last_line", "L1")
-            st.session_state[line_key] = (
-                last_line if last_line in PRODUCTION_LINES else "L1"
-            )
-        line = st.selectbox("ไลน์ผลิต", PRODUCTION_LINES, key=line_key)
-    else:
-        # แผนกอื่นไม่เก็บค่าไลน์ แม้ session เดิมจะเคยเลือก PD
-        line = ""
-
-    return department, line
-
-
 def page_input():
     heading(
         "📝 บันทึกใบเบิก",
-        "เพิ่มหลาย JOB ในหน้าเดียว โดยข้อมูลแต่ละแถวแยกแผนก สินค้า และจำนวน",
+        "เพิ่ม JOB หลายรายการในหน้าเดียว พร้อมระบุสินค้าและจำนวนแยกแต่ละแถว",
     )
     st.info("เวลา Cut-off คือ 16:00 น. ระบบติดแท็กใบเบิกเย็นจากเวลารับเรื่องอัตโนมัติ")
-
     initialize_entry_rows()
 
-    if st.button(
-        "➕ เพิ่มรายการเบิก",
-        key="entry_add_row",
-    ):
-        add_entry_row()
-        st.rerun()
-
-    entries = []
+    # หัวคอลัมน์สัดส่วน 2:2:2:4:2:1 ตามที่ระบุ
+    header_cols = st.columns([2, 2, 2, 4, 2, 1])
+    headers = ["รหัส JOB", "แผนก", "ไลน์ผลิต", "รายการสินค้า / รหัสสินค้า", "จำนวน", "ลบ"]
+    for col, label in zip(header_cols, headers):
+        with col:
+            st.markdown(f"**{label}**")
 
     for index, row_id in enumerate(st.session_state["entry_rows"], start=1):
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        title_col, remove_col = st.columns([5, 1])
-        with title_col:
-            st.markdown(f"**รายการเบิก {index}**")
-        with remove_col:
+        st.markdown('<div class="entry-card">', unsafe_allow_html=True)
+
+        cols = st.columns([2, 2, 2, 4, 2, 1])
+
+        with cols[0]:
+            job_number = st.text_input(
+                "รหัส JOB",
+                key=f"entry_job_{row_id}",
+                placeholder="JOB-6901",
+                label_visibility="collapsed",
+            )
+
+        with cols[1]:
+            dept_key = f"entry_department_{row_id}"
+            custom_key = f"entry_custom_department_{row_id}"
+            if dept_key not in st.session_state:
+                last_dept = st.session_state.get("last_department", "PD")
+                st.session_state[dept_key] = last_dept if last_dept in DEPARTMENTS else "PD"
+
+            department_choice = st.selectbox(
+                "แผนก",
+                DEPARTMENTS,
+                key=dept_key,
+                label_visibility="collapsed",
+            )
+            if department_choice == "อื่นๆ":
+                department = st.text_input(
+                    "ระบุแผนก",
+                    key=custom_key,
+                    placeholder="ระบุแผนก",
+                ).strip() or "อื่นๆ"
+            else:
+                department = department_choice
+
+        with cols[2]:
+            line = ""
+            if department == "PD":
+                line_key = f"entry_line_{row_id}"
+                if line_key not in st.session_state:
+                    last_line = st.session_state.get("last_line", "L1")
+                    st.session_state[line_key] = (
+                        last_line if last_line in PRODUCTION_LINES else "L1"
+                    )
+                line = st.selectbox(
+                    "ไลน์ผลิต",
+                    PRODUCTION_LINES,
+                    key=line_key,
+                    label_visibility="collapsed",
+                )
+            else:
+                # บังคับว่างสำหรับทุกแผนกที่ไม่ใช่ PD
+                line = ""
+                st.markdown(
+                    '<div style="padding:9px 4px;color:#94a3b8">—</div>',
+                    unsafe_allow_html=True,
+                )
+
+        with cols[3]:
+            item_name = st.text_input(
+                "รายการสินค้า / รหัสสินค้า",
+                key=f"entry_item_{row_id}",
+                placeholder="ชื่อหรือรหัสสินค้า",
+                label_visibility="collapsed",
+            )
+
+        with cols[4]:
+            quantity = st.number_input(
+                "จำนวนที่เบิก",
+                min_value=0,
+                step=1,
+                value=0,
+                key=f"entry_quantity_{row_id}",
+                label_visibility="collapsed",
+            )
+
+        with cols[5]:
+            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
             st.button(
-                "🗑️ ลบ",
+                "ลบ",
                 key=f"entry_remove_{row_id}",
                 disabled=len(st.session_state["entry_rows"]) <= 1,
                 on_click=remove_entry_row,
@@ -830,100 +856,100 @@ def page_input():
                 use_container_width=True,
             )
 
-        c1, c2, c3 = st.columns([1, 1.4, 1.5])
-        with c1:
-            job_number = st.text_input(
-                "รหัส JOB *",
-                key=f"entry_job_{row_id}",
-                placeholder="เช่น JOB-6901",
-            )
-        with c2:
-            department, line = render_entry_department(row_id)
-        with c3:
-            item_name = st.text_input(
-                "รายการสินค้า / รหัสสินค้า",
-                key=f"entry_item_{row_id}",
-                placeholder="ระบุสินค้า",
-            )
-
-        q1, q2 = st.columns([1, 2.9])
-        with q1:
-            quantity = st.number_input(
-                "จำนวนที่เบิก",
-                min_value=0,
-                step=1,
-                value=0,
-                key=f"entry_quantity_{row_id}",
-            )
-        with q2:
-            st.caption(
-                f"ไลน์ผลิต: {line if department == 'PD' else '— (ไม่ใช่แผนก PD)'}"
-            )
-
-        entries.append({
-            "job_number": job_number.strip(),
-            "department": department,
-            "line": line if department == "PD" else "",
-            "item_name": item_name.strip(),
-            "quantity": int(quantity),
-        })
+        st.caption(
+            f"รายการ {index} · แผนก {department} · "
+            f"ไลน์ {line if department == 'PD' else 'ไม่ระบุ'}"
+        )
         st.markdown("</div>", unsafe_allow_html=True)
 
-    if st.button(
-        "📥 บันทึกรับเรื่องทั้งหมด",
-        type="primary",
-        use_container_width=True,
-        key="entry_save_all",
-    ):
-        filled = [entry for entry in entries if entry["job_number"]]
-        if not filled:
-            st.error("กรุณากรอกรหัส JOB อย่างน้อย 1 รายการ")
-            return
-
-        # ตรวจ JOB ซ้ำภายในแบบฟอร์มก่อนเริ่ม INSERT
-        job_numbers = [entry["job_number"].casefold() for entry in filled]
-        duplicates = sorted({job for job in job_numbers if job_numbers.count(job) > 1})
-        if duplicates:
-            st.error("พบ JOB ซ้ำในฟอร์ม กรุณาแก้ไข: " + ", ".join(duplicates))
-            return
-
-        created_at = now_bangkok().isoformat(sep=" ", timespec="seconds")
-        saved = 0
-        errors = []
-
-        for entry in filled:
-            department = entry["department"].strip()
-            line = entry["line"] if department == "PD" else ""
-            if department == "PD" and line not in PRODUCTION_LINES:
-                errors.append(f"{entry['job_number']}: กรุณาเลือกไลน์ L1-L10")
-                continue
-
-            success, message = insert_requisition(
-                job_number=entry["job_number"],
-                department=department,
-                line=line,
-                item_name=entry["item_name"],
-                quantity=entry["quantity"],
-                created_at=created_at,
-            )
-            if success:
-                saved += 1
-            else:
-                errors.append(message)
-
-        if saved:
-            st.session_state["last_department"] = filled[-1]["department"]
-            st.session_state["last_line"] = filled[-1]["line"] or "L1"
-            st.success(f"บันทึกรับเรื่องสำเร็จ {saved} รายการ")
-            play_tick()
-        for message in errors:
-            st.warning(message)
-        if saved:
+    action1, action2 = st.columns([1, 4])
+    with action1:
+        if st.button("➕ เพิ่มรายการเบิก", key="entry_add_row", use_container_width=True):
+            add_entry_row()
             st.rerun()
+
+    with action2:
+        if st.button(
+            "📥 บันทึกรับเรื่องทั้งหมด",
+            type="primary",
+            use_container_width=True,
+            key="entry_save_all",
+        ):
+            rows_to_save = []
+            for row_id in st.session_state["entry_rows"]:
+                job = str(st.session_state.get(f"entry_job_{row_id}", "")).strip()
+                if not job:
+                    continue
+                dept_choice = st.session_state.get(f"entry_department_{row_id}", "PD")
+                if dept_choice == "อื่นๆ":
+                    department = (
+                        str(st.session_state.get(f"entry_custom_department_{row_id}", "")).strip()
+                        or "อื่นๆ"
+                    )
+                else:
+                    department = dept_choice
+                line = (
+                    st.session_state.get(f"entry_line_{row_id}", "")
+                    if department == "PD"
+                    else ""
+                )
+                rows_to_save.append({
+                    "job_number": job,
+                    "department": department,
+                    "line": line,
+                    "item_name": str(st.session_state.get(f"entry_item_{row_id}", "")).strip(),
+                    "quantity": int(st.session_state.get(f"entry_quantity_{row_id}", 0)),
+                })
+
+            if not rows_to_save:
+                st.error("กรุณากรอกรหัส JOB อย่างน้อย 1 รายการ")
+            else:
+                normalized = [row["job_number"].casefold() for row in rows_to_save]
+                duplicates = sorted({job for job in normalized if normalized.count(job) > 1})
+                if duplicates:
+                    st.error("พบ JOB ซ้ำในฟอร์ม: " + ", ".join(duplicates))
+                else:
+                    received_at = now_bangkok().isoformat(sep=" ", timespec="seconds")
+                    saved_count = 0
+                    errors = []
+
+                    for row in rows_to_save:
+                        # Guard เพิ่มอีกชั้น: มี line ได้เฉพาะแผนก PD
+                        row_line = row["line"] if row["department"] == "PD" else ""
+                        if row["department"] == "PD" and row_line not in PRODUCTION_LINES:
+                            errors.append(f"{row['job_number']}: กรุณาเลือกไลน์ L1-L10")
+                            continue
+
+                        ok, message = insert_requisition(
+                            job_number=row["job_number"],
+                            department=row["department"],
+                            line=row_line,
+                            item_name=row["item_name"],
+                            quantity=row["quantity"],
+                            created_at=received_at,
+                        )
+                        if ok:
+                            saved_count += 1
+                        else:
+                            errors.append(message)
+
+                    if saved_count:
+                        last = rows_to_save[-1]
+                        st.session_state["last_department"] = (
+                            last["department"] if last["department"] in DEPARTMENTS
+                            else "อื่นๆ"
+                        )
+                        st.session_state["last_line"] = last["line"] or "L1"
+                        st.success(f"บันทึกรับเรื่องสำเร็จ {saved_count} รายการ")
+                        play_tick()
+                    for error in errors:
+                        st.warning(error)
+                    if saved_count:
+                        st.rerun()
 
 
 # ============================================================
-# Page 2: Status management
+# Page 2: Status management — active jobs only
 # ============================================================
 
 def set_current_timestamp(date_key, time_key, enabled_key):
@@ -942,7 +968,9 @@ def timestamp_input(label, job_id, field_name, existing_value):
     if date_key not in st.session_state:
         st.session_state[date_key] = existing.date() if existing else now_bangkok().date()
     if time_key not in st.session_state:
-        st.session_state[time_key] = existing.time().replace(microsecond=0) if existing else time(0, 0)
+        st.session_state[time_key] = (
+            existing.time().replace(microsecond=0) if existing else time(0, 0)
+        )
     if enabled_key not in st.session_state:
         st.session_state[enabled_key] = existing is not None
 
@@ -965,29 +993,29 @@ def timestamp_input(label, job_id, field_name, existing_value):
     st.checkbox(f"บันทึกเวลา {label}", key=enabled_key)
     if not st.session_state[enabled_key]:
         return ""
-
-    chosen = datetime.combine(st.session_state[date_key], st.session_state[time_key])
-    return BANGKOK.localize(chosen).isoformat(sep=" ", timespec="seconds")
+    selected = datetime.combine(st.session_state[date_key], st.session_state[time_key])
+    return BANGKOK.localize(selected).isoformat(sep=" ", timespec="seconds")
 
 
 def page_manage(df):
-    heading("⚙️ จัดการสถานะ", "บันทึกเวลาเริ่มจัด จัดเสร็จวาง Staging หรือยกเลิก JOB")
-    if df.empty:
-        st.warning("ยังไม่มีข้อมูลใบเบิก")
-        return
+    heading(
+        "⚙️ จัดการสถานะ",
+        "แสดงเฉพาะ JOB ที่รอจัดหรือกำลังจัด งานที่เสร็จแล้วจะย้ายไปดูในประวัติ",
+    )
 
-    active = df.loc[df["status"] != "🔴 ยกเลิก"].copy()
+    # ซ่อนทั้งงานเสร็จและงานที่ยกเลิก เหลือเฉพาะงานที่ยังดำเนินการ
+    active = df.loc[df["status"].isin(["🟠 รอจัด", "🟡 กำลังจัด"])].copy()
     if active.empty:
-        st.info("ไม่มี JOB ที่ยังดำเนินการอยู่")
-        active = df.copy()
+        st.success("ไม่มี JOB ค้างจัดในขณะนี้ 🎉")
+        return
 
     choices = {
         f"{row['job_number']} · {row['department']} · {row['status']}": int(row["id"])
         for _, row in active.iterrows()
     }
-    selected = st.selectbox("เลือก JOB", list(choices), key="manage_job_select")
+    selected = st.selectbox("เลือก JOB ที่กำลังดำเนินการ", list(choices), key="manage_job_select")
     job_id = choices[selected]
-    record = df.loc[df["id"] == job_id].iloc[0].to_dict()
+    record = active.loc[active["id"] == job_id].iloc[0].to_dict()
 
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.markdown(
@@ -996,35 +1024,70 @@ def page_manage(df):
     )
     st.caption(f"รับเรื่อง: {format_timestamp(record.get('created_at'))}")
 
+    start_dt = to_bangkok_datetime(record.get("start_pick_time"))
+    finish_dt = to_bangkok_datetime(record.get("finish_pick_time"))
+
+    # ปุ่มลงเวลาปัจจุบันสำหรับงานหน้างานโดยตรง
+    quick1, quick2 = st.columns(2)
+    with quick1:
+        if st.button(
+            "⏱️ เริ่มจัดสินค้า",
+            type="primary",
+            use_container_width=True,
+            key=f"quick_start_{job_id}",
+            disabled=bool(start_dt),
+        ):
+            now_text = now_bangkok().isoformat(sep=" ", timespec="seconds")
+            if update_requisition_times(job_id, now_text, ""):
+                st.success("บันทึกเวลาเริ่มจัดแล้ว")
+                play_tick()
+                st.rerun()
+
+    with quick2:
+        if st.button(
+            "📦 จัดเสร็จ/วาง Staging",
+            type="primary",
+            use_container_width=True,
+            key=f"quick_finish_{job_id}",
+            disabled=not bool(start_dt),
+        ):
+            now_text = now_bangkok().isoformat(sep=" ", timespec="seconds")
+            if update_requisition_times(job_id, record.get("start_pick_time", ""), now_text):
+                st.success("จัดเสร็จและบันทึกวาง Staging แล้ว งานถูกนำออกจากหน้าจัดการ")
+                play_tick()
+                st.rerun()
+
+    st.divider()
+    st.markdown("##### ปรับเวลาเอง / แก้ไขเวลาที่บันทึก")
     start_value = timestamp_input(
-        "เริ่มจัดสินค้า", job_id, "start_pick", record.get("start_pick_time")
+        "เวลาเริ่มจัดสินค้า", job_id, "start_pick", record.get("start_pick_time")
     )
     finish_value = timestamp_input(
-        "จัดเสร็จ / วาง Staging", job_id, "finish_pick", record.get("finish_pick_time")
+        "เวลาจัดเสร็จ / วาง Staging", job_id, "finish_pick", record.get("finish_pick_time")
     )
 
     if st.button(
-        "💾 บันทึกการอัปเดตสถานะ",
-        type="primary",
+        "💾 บันทึกเวลาแก้ไข",
         use_container_width=True,
-        key=f"manage_save_{job_id}",
+        key=f"manual_save_{job_id}",
     ):
-        start_dt = to_bangkok_datetime(start_value)
-        finish_dt = to_bangkok_datetime(finish_value)
+        start_value_dt = to_bangkok_datetime(start_value)
+        finish_value_dt = to_bangkok_datetime(finish_value)
         received_dt = to_bangkok_datetime(record.get("created_at"))
 
-        if start_dt and received_dt and start_dt < received_dt:
+        if start_value_dt and received_dt and start_value_dt < received_dt:
             st.error("เวลาเริ่มจัดต้องไม่อยู่ก่อนเวลารับเรื่อง")
-        elif finish_dt and not start_dt:
+        elif finish_value_dt and not start_value_dt:
             st.error("กรุณาระบุเวลาเริ่มจัดก่อนบันทึกเวลาจัดเสร็จ")
-        elif start_dt and finish_dt and finish_dt < start_dt:
+        elif start_value_dt and finish_value_dt and finish_value_dt < start_value_dt:
             st.error("เวลาจัดเสร็จต้องไม่อยู่ก่อนเวลาเริ่มจัด")
         elif update_requisition_times(job_id, start_value, finish_value):
-            st.success("บันทึกเวลาสถานะเรียบร้อย")
+            st.success("บันทึกเวลาเรียบร้อย")
             play_tick()
             st.rerun()
         else:
             st.error("ไม่พบ JOB ที่ต้องการอัปเดต")
+
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown('<div class="panel">', unsafe_allow_html=True)
@@ -1064,7 +1127,6 @@ def page_dashboard(df):
     pending = int(view["status"].isin(["🟠 รอจัด", "🟡 กำลังจัด"]).sum())
     completed = view.loc[view["status"] == "🟢 จัดเสร็จเรียบร้อย"]
     late_count = int(view["late"].fillna(False).sum())
-
     processing = pd.to_numeric(completed["picking_minutes"], errors="coerce").dropna().tolist()
     total = pd.to_numeric(completed["warehouse_total_minutes"], errors="coerce").dropna().tolist()
     avg_processing = sum(processing) / len(processing) if processing else None
@@ -1085,7 +1147,6 @@ def page_dashboard(df):
                 f'<div class="kpi-value">{value}</div><div class="kpi-hint">{hint}</div></div>',
                 unsafe_allow_html=True,
             )
-
     if avg_total is not None:
         st.caption(f"เวลารวมฝั่งคลังเฉลี่ย: {format_duration(avg_total)}")
 
@@ -1143,11 +1204,11 @@ def page_dashboard(df):
 
 
 # ============================================================
-# Page 4: History and export
+# Page 4: History / exports
 # ============================================================
 
 def page_history(df):
-    heading("📄 ประวัติและส่งออกข้อมูล", "ค้นหา ดู Timeline และส่งออกรายงานฝั่งคลัง")
+    heading("📄 ประวัติและส่งออกข้อมูล", "ตรวจสอบทุกสถานะ ดู Timeline และส่งออกรายงาน")
     filtered = render_filters(df, "history")
     if filtered.empty:
         st.warning("ยังไม่มีข้อมูลใบเบิก")
@@ -1181,7 +1242,6 @@ def page_history(df):
     export_df = make_export_frame(filtered)
     excel_bytes = create_excel_bytes(export_df)
     csv_bytes = export_df.to_csv(index=False).encode("utf-8-sig")
-
     c1, c2 = st.columns(2)
     with c1:
         st.download_button(
@@ -1202,12 +1262,6 @@ def page_history(df):
             use_container_width=True,
         )
 
-    st.markdown(
-        '<div class="panel"><b>SMART WAREHOUSE VERSION 1.0</b><br>'
-        '<span class="small-muted">รายงานเวลารับเรื่อง เริ่มจัด และจัดเสร็จ/วาง Staging</span></div>',
-        unsafe_allow_html=True,
-    )
-
 
 # ============================================================
 # Main
@@ -1225,7 +1279,6 @@ def main():
         return
 
     render_topbar()
-
     with st.sidebar:
         st.markdown("### 📦 SMART WAREHOUSE")
         st.markdown(f"ผู้ใช้งาน: **{DISPLAY_NAME}**")
@@ -1247,7 +1300,6 @@ def main():
             st.rerun()
 
     df = load_data()
-
     if page == "📝 บันทึกใบเบิก":
         page_input()
     elif page == "⚙️ จัดการสถานะ":
@@ -1265,4 +1317,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
